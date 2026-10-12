@@ -1,0 +1,93 @@
+:root {
+  color-scheme: light;
+  font-family: system-ui, sans-serif;
+  color: #17211c;
+  background: #f6f7f5;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+}
+
+main {
+  width: min(100% - 2rem, 1080px);
+  margin: 2rem auto;
+}
+
+.shelf {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr));
+  gap: 1rem;
+}
+
+.shelf-item,
+.store-page,
+.selection-page,
+.confirmation-page {
+  padding: 1.25rem;
+  border: 1px solid #d7ded8;
+  border-radius: 0.75rem;
+  background: white;
+}
+
+.shelf-item img {
+  width: 100%;
+  max-height: 180px;
+  object-fit: contain;
+}
+
+.price {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.offer-link,
+button {
+  display: inline-block;
+  margin-top: 0.75rem;
+  padding: 0.65rem 0.9rem;
+  border: 0;
+  border-radius: 0.4rem;
+  color: white;
+  background: #245b41;
+  font: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+form,
+fieldset,
+label {
+  display: grid;
+  gap: 0.6rem;
+}
+
+form {
+  max-width: 520px;
+}
+
+fieldset {
+  margin: 0;
+  padding: 1rem;
+}
+
+input,
+select {
+  width: 100%;
+  padding: 0.65rem;
+  border: 1px solid #abb9ae;
+  border-radius: 0.35rem;
+  font: inherit;
+}
+
+@media (max-width: 600px) {
+  main {
+    width: min(100% - 1rem, 1080px);
+    margin: 1rem auto;
+  }
+}
