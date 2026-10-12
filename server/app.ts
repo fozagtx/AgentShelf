@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { extname, resolve } from "node:path";
-import type { Client } from "@elastic/elasticsearch";
 import { Hono } from "hono";
+import type { Db } from "./db.js";
 import {
   configuredIntegrations,
   DEFAULT_REPS,
@@ -10,15 +10,18 @@ import {
   PRODUCT_FIX_MODEL,
 } from "./config.js";
 import {
-  EVENTS_INDEX,
-  EXPERIMENTS_INDEX,
-  PRODUCTS_INDEX,
-  RUNS_INDEX,
-  createElasticClient,
-  ensureIndices,
-  getDocument,
-  searchDocuments,
-} from "./elastic.js";
+  countDocs,
+  createDb,
+  ensureSchema,
+  EVENTS_TABLE,
+  EXPERIMENTS_TABLE,
+  findDocs,
+  getDoc,
+  patchDoc,
+  PRODUCTS_TABLE,
+  putDoc,
+  RUNS_TABLE,
+} from "./db.js";
 import { generateProductFix, missingGatewayCredentials } from "./fixes.js";
 import { loadPlatformKey } from "./platform.js";
 import { createMerchantRoutes } from "./merchant.js";
@@ -31,13 +34,13 @@ import { gateway, hasGateway } from "./gateway.js";
 import { createImageRoutes } from "./images.js";
 
 export interface AppOptions {
-  elastic?: Client;
+  db?: Db;
 }
 
 export async function createApp(options: AppOptions = {}) {
-  const elastic = options.elastic ?? createElasticClient();
-  await ensureIndices(elastic);
-  const platformKey = await loadPlatformKey(elastic);
+  const db = options.db ?? createDb();
+  await ensureSchema(db);
+  const platformKey = await loadPlatformKey(db);
   const app = new Hono();
   app.get("/.well-known/jwks.json", (c) =>
     c.json({ keys: [platformKey.publicJwk] }),
@@ -50,7 +53,7 @@ export async function createApp(options: AppOptions = {}) {
       channel3: configured.channel3,
       kernel: configured.kernel,
       render: configured.render,
-      elastic: configured.elastic,
+      database: configured.database,
       astropods: hasGateway(),
     });
   });
@@ -92,10 +95,10 @@ export async function createApp(options: AppOptions = {}) {
     }
   });
 
-  app.route("/", createProductRoutes(elastic));
-  app.route("/", createImageRoutes(elastic));
-  app.route("/api/paypal/v1", createMerchantRoutes(elastic, platformKey));
-  app.route("/", createPageRoutes(elastic));
+  app.route("/", createProductRoutes(db));
+  app.route("/", createImageRoutes(db));
+  app.route("/api/paypal/v1", createMerchantRoutes(db, platformKey));
+  app.route("/", createPageRoutes(db));
 
   app.post("/api/products/:id/fix", async (c) => {
     const missing = missingGatewayCredentials();
@@ -104,13 +107,11 @@ export async function createApp(options: AppOptions = {}) {
         message: `Product copy fixes are unavailable. Missing environment variables: ${missing.join(", ")}.`,
       }, 503);
     }
-    const product = await getProduct(elastic, c.req.param("id"));
+    const product = await getProduct(db, c.req.param("id"));
     if (!product) return c.json({ message: "Product not found." }, 404);
-    const experiments = await searchDocuments<Record<string, any>>(
-      elastic,
-      EXPERIMENTS_INDEX,
-      { term: { product_id: product.id } },
-    );
+    const experiments = await findDocs<Record<string, any>>(db, EXPERIMENTS_TABLE, {
+      where: { product_id: product.id },
+    });
     const latest = experiments.sort((a, b) =>
       String(b.created_at ?? "").localeCompare(String(a.created_at ?? "")),
     )[0];
@@ -127,12 +128,7 @@ export async function createApp(options: AppOptions = {}) {
         fixed_variant: fixedVariant,
         updated_at: new Date().toISOString(),
       };
-      await elastic.index({
-        index: PRODUCTS_INDEX,
-        id: product.id,
-        document: updated,
-        refresh: "wait_for",
-      });
+      await putDoc(db, PRODUCTS_TABLE, product.id, updated);
       return c.json(updated);
     } catch (error) {
       return c.json({
@@ -147,7 +143,7 @@ export async function createApp(options: AppOptions = {}) {
     if (typeof input.productId !== "string" || typeof input.query !== "string" || !input.query.trim()) {
       return c.json({ message: "productId and query are required." }, 400);
     }
-    const product = await getProduct(elastic, input.productId);
+    const product = await getProduct(db, input.productId);
     if (!product) return c.json({ message: "Product not found." }, 404);
     const missing = [
       ...missingChannel3Credentials(),
@@ -192,21 +188,14 @@ export async function createApp(options: AppOptions = {}) {
         };
       }),
     };
-    await elastic.index({
-      index: EXPERIMENTS_INDEX,
-      id,
-      document: experiment,
-      refresh: "wait_for",
-    });
+    await putDoc(db, EXPERIMENTS_TABLE, id, experiment);
     try {
       await startExperimentWorkflow(id);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unable to start the Render workflow.";
-      await elastic.update({
-        index: EXPERIMENTS_INDEX,
-        id,
-        doc: { status: "failed", failure_reason: message },
-        refresh: "wait_for",
+      await patchDoc(db, EXPERIMENTS_TABLE, id, {
+        status: "failed",
+        failure_reason: message,
       });
       return c.json({ message }, 502);
     }
@@ -214,57 +203,43 @@ export async function createApp(options: AppOptions = {}) {
   });
 
   app.get("/api/experiments", async (c) => {
-    const experiments = await searchDocuments<Record<string, any>>(elastic, EXPERIMENTS_INDEX);
-    return c.json(await Promise.all(experiments.map((experiment) => withRunCounts(elastic, experiment))));
+    const experiments = await findDocs<Record<string, any>>(db, EXPERIMENTS_TABLE);
+    return c.json(await Promise.all(experiments.map((experiment) => withRunCounts(db, experiment))));
   });
 
   app.get("/api/experiments/:id", async (c) => {
-    const experiment = await getDocument<Record<string, any>>(
-      elastic,
-      EXPERIMENTS_INDEX,
+    const experiment = await getDoc<Record<string, any>>(
+      db,
+      EXPERIMENTS_TABLE,
       c.req.param("id"),
     );
     if (!experiment) return c.json({ message: "Experiment not found." }, 404);
-    return c.json(await withRunCounts(elastic, experiment));
+    return c.json(await withRunCounts(db, experiment));
   });
 
   app.get("/api/experiments/:id/live", async (c) => {
     const experimentId = c.req.param("id");
-    const runResponse = await elastic.search<Record<string, any>>({
-      index: RUNS_INDEX,
-      size: 1000,
-      query: { term: { experiment_id: experimentId } },
+    const runDocs = await findDocs<Record<string, any>>(db, RUNS_TABLE, {
+      where: { experiment_id: experimentId },
+      limit: 1000,
     });
-    const runHits = runResponse.hits.hits;
-    if (!runHits.length) return c.json({ runs: [] });
+    if (!runDocs.length) return c.json({ runs: [] });
 
-    const runIds = runHits.map((hit) => String(hit._source?.id ?? hit._id));
-    const eventResponse = await elastic.search<Record<string, any>>({
-      index: EVENTS_INDEX,
-      size: 10_000,
-      query: {
-        bool: {
-          filter: [
-            { terms: { runId: runIds } },
-            { term: { stage: "agent_step" } },
-          ],
-        },
-      },
-      sort: [{ step: "desc" }, { ts: "desc" }],
+    const runIds = runDocs.map((run) => String(run.id ?? ""));
+    const eventDocs = await findDocs<Record<string, any>>(db, EVENTS_TABLE, {
+      where: { stage: "agent_step" },
+      anyOf: ["runId", runIds],
     });
     const stepsByRun = new Map<string, Record<string, any>[]>();
-    for (const hit of eventResponse.hits.hits) {
-      const event = hit._source;
-      if (!event) continue;
+    for (const event of eventDocs) {
       const runId = String(event.runId ?? "");
       const steps = stepsByRun.get(runId) ?? [];
       steps.push(event);
       stepsByRun.set(runId, steps);
     }
 
-    const runs = runHits.map((hit) => {
-      const run = hit._source ?? {};
-      const runId = String(run.id ?? hit._id);
+    const runs = runDocs.map((run) => {
+      const runId = String(run.id ?? "");
       const steps = (stepsByRun.get(runId) ?? [])
         .sort((left, right) =>
           Number(right.step ?? 0) - Number(left.step ?? 0) ||
@@ -302,17 +277,16 @@ export async function createApp(options: AppOptions = {}) {
   });
 
   app.get("/api/experiments/:id/analytics", async (c) =>
-    c.json(await getExperimentAnalytics(elastic, c.req.param("id"))),
+    c.json(await getExperimentAnalytics(db, c.req.param("id"))),
   );
 
   app.get("/api/experiments/:id/runs", async (c) => {
-    const result = await elastic.search<Record<string, any>>({
-      index: RUNS_INDEX,
-      size: 1000,
-      query: { term: { experiment_id: c.req.param("id") } },
-      sort: [{ created_at: "asc" }],
+    const runs = await findDocs<Record<string, any>>(db, RUNS_TABLE, {
+      where: { experiment_id: c.req.param("id") },
+      orderBy: "created_at",
+      limit: 1000,
     });
-    return c.json(result.hits.hits.flatMap((hit) => hit._source ? [hit._source] : []));
+    return c.json(runs);
   });
 
   app.get("/pages.css", async (c) => {
@@ -348,22 +322,12 @@ export async function createApp(options: AppOptions = {}) {
   return app;
 }
 
-async function withRunCounts(client: Client, experiment: Record<string, any>) {
+async function withRunCounts(db: Db, experiment: Record<string, any>) {
   const [total, done] = await Promise.all([
-    client.count({
-      index: RUNS_INDEX,
-      query: { term: { experiment_id: experiment.id } },
-    }),
-    client.count({
-      index: RUNS_INDEX,
-      query: {
-        bool: {
-          filter: [
-            { term: { experiment_id: experiment.id } },
-            { terms: { status: ["complete", "completed", "done", "failed"] } },
-          ],
-        },
-      },
+    countDocs(db, RUNS_TABLE, { where: { experiment_id: experiment.id } }),
+    countDocs(db, RUNS_TABLE, {
+      where: { experiment_id: experiment.id },
+      anyOf: ["status", ["complete", "completed", "done", "failed"]],
     }),
   ]);
   return {
@@ -378,8 +342,8 @@ async function withRunCounts(client: Client, experiment: Record<string, any>) {
       url: competitor.url ?? competitor.offers?.[0]?.url ?? "",
     })),
     run_counts: {
-      total: total.count,
-      done: done.count,
+      total,
+      done,
     },
   };
 }

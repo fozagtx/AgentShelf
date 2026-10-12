@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
-import type { Client } from "@elastic/elasticsearch";
+import type { Db } from "./db.js";
 import { Hono } from "hono";
 import { getAppUrl } from "./config.js";
-import { PRODUCTS_INDEX, getDocument, searchDocuments } from "./elastic.js";
+import { deleteDoc, findDocs, getDoc, PRODUCTS_TABLE, putDoc } from "./db.js";
 import {
   channel3ImageUrl,
   createChannel3Client,
@@ -28,18 +28,18 @@ export interface Product extends Record<string, any> {
   url: string;
 }
 
-export async function listProducts(client: Client) {
-  return searchDocuments<Product>(client, PRODUCTS_INDEX);
+export async function listProducts(db: Db) {
+  return findDocs<Product>(db, PRODUCTS_TABLE);
 }
 
-export async function getProduct(client: Client, id: string) {
-  return getDocument<Product>(client, PRODUCTS_INDEX, id);
+export async function getProduct(db: Db, id: string) {
+  return getDoc<Product>(db, PRODUCTS_TABLE, id);
 }
 
-export function createProductRoutes(client: Client) {
+export function createProductRoutes(db: Db) {
   const app = new Hono();
 
-  app.get("/api/products", async (c) => c.json(await listProducts(client)));
+  app.get("/api/products", async (c) => c.json(await listProducts(db)));
   app.post("/api/products/import", async (c) => {
     const input = await readObject(c);
     if (!input) return c.json({ message: "A JSON import body is required." }, 400);
@@ -76,13 +76,7 @@ export function createProductRoutes(client: Client) {
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       };
-      await client.index({
-        index: PRODUCTS_INDEX,
-        id,
-        document,
-        refresh: "wait_for",
-        op_type: "create",
-      });
+      await putDoc(db, PRODUCTS_TABLE, id, document);
       return c.json(document, 201);
     } catch (error) {
       const channelError = error as { message?: string; statusCode?: number };
@@ -136,7 +130,7 @@ export function createProductRoutes(client: Client) {
     if (!input) return c.json({ message: "A JSON product body is required." }, 400);
     const product = validateProduct(input, String(input.id ?? randomUUID()));
     if (!product.ok) return c.json({ message: product.error }, 400);
-    if (await getProduct(client, product.value.id)) {
+    if (await getProduct(db, product.value.id)) {
       return c.json({ message: "A product with this id already exists." }, 409);
     }
     const document = {
@@ -144,24 +138,18 @@ export function createProductRoutes(client: Client) {
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
-    await client.index({
-      index: PRODUCTS_INDEX,
-      id: document.id,
-      document,
-      refresh: "wait_for",
-      op_type: "create",
-    });
+    await putDoc(db, PRODUCTS_TABLE, document.id, document);
     return c.json(document, 201);
   });
 
   app.get("/api/products/:id", async (c) => {
-    const product = await getProduct(client, c.req.param("id"));
+    const product = await getProduct(db, c.req.param("id"));
     return product ? c.json(product) : c.json({ message: "Product not found." }, 404);
   });
 
   app.put("/api/products/:id", async (c) => {
     const id = c.req.param("id");
-    const existing = await getProduct(client, id);
+    const existing = await getProduct(db, id);
     if (!existing) return c.json({ message: "Product not found." }, 404);
     const input = await readObject(c);
     if (!input) return c.json({ message: "A JSON product body is required." }, 400);
@@ -173,26 +161,21 @@ export function createProductRoutes(client: Client) {
       created_at: existing.created_at,
       updated_at: new Date().toISOString(),
     };
-    await client.index({
-      index: PRODUCTS_INDEX,
-      id,
-      document,
-      refresh: "wait_for",
-    });
+    await putDoc(db, PRODUCTS_TABLE, id, document);
     return c.json(document);
   });
 
   app.delete("/api/products/:id", async (c) => {
     const id = c.req.param("id");
-    if (!(await getProduct(client, id))) {
+    if (!(await getProduct(db, id))) {
       return c.json({ message: "Product not found." }, 404);
     }
-    await client.delete({ index: PRODUCTS_INDEX, id, refresh: "wait_for" });
+    await deleteDoc(db, PRODUCTS_TABLE, id);
     return c.body(null, 204);
   });
 
   app.get("/feed.csv", async (c) => {
-    const products = await listProducts(client);
+    const products = await listProducts(db);
     const columns = [
       "id", "title", "link", "image_link", "description", "price",
       "availability", "item_group_id", "brand", "mpn", "gtin", "sale_price",

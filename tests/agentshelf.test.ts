@@ -7,14 +7,15 @@ import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createApp } from "../server/app.js";
 import {
-  ANALYTICS_INDEX,
-  CARTS_INDEX,
-  EVENTS_INDEX,
-  EXPERIMENTS_INDEX,
-  PRODUCTS_INDEX,
-  RUNS_INDEX,
-  ensureIndices,
-} from "../server/elastic.js";
+  deleteDoc,
+  EVENTS_TABLE,
+  EXPERIMENTS_TABLE,
+  getDoc,
+  PRODUCTS_TABLE,
+  putDoc,
+  RUNS_TABLE,
+  ensureSchema,
+} from "../server/db.js";
 import { writeEvent } from "../server/events.js";
 import { buildRunSpecs, shuffleShelf } from "../server/shelf.js";
 import { loadPlatformKey, mintPlatformToken } from "../server/platform.js";
@@ -22,7 +23,7 @@ import { MODEL_FLEET } from "../server/config.js";
 import {
   cartInput,
   createSchemaValidator,
-  elastic,
+  db,
   productInput,
   request,
   testPrefix,
@@ -32,17 +33,17 @@ const validate = createSchemaValidator();
 const integration = (enabled: boolean) => (enabled ? it : it.skip);
 const uniqueId = () => `${testPrefix}-${randomUUID()}`;
 
-describe("AgentShelf with local Elasticsearch", () => {
+describe("AgentShelf with local PostgreSQL", () => {
   let app: Awaited<ReturnType<typeof createApp>>;
   let product: Record<string, unknown> & { id: string };
   let platformToken: string;
   let signingKey: Awaited<ReturnType<typeof loadPlatformKey>>;
 
   beforeAll(async () => {
-    await ensureIndices(elastic);
-    app = await createApp({ elastic });
-    signingKey = await loadPlatformKey(elastic);
-    platformToken = await mintPlatformToken(elastic);
+    await ensureSchema(db);
+    app = await createApp({ db });
+    signingKey = await loadPlatformKey(db);
+    platformToken = await mintPlatformToken(db);
     const response = await request(app, "POST", "/api/products", undefined, productInput());
     expect(response.status).toBe(201);
     product = await response.json();
@@ -74,36 +75,19 @@ describe("AgentShelf with local Elasticsearch", () => {
 
   afterAll(async () => {
     await Promise.all([
-      elastic.deleteByQuery({
-        index: PRODUCTS_INDEX,
-        query: { prefix: { id: testPrefix } },
-      }),
-      elastic.deleteByQuery({
-        index: CARTS_INDEX,
-        query: { prefix: { product_ids: testPrefix } },
-      }),
-      elastic.deleteByQuery({
-        index: EXPERIMENTS_INDEX,
-        query: { prefix: { id: testPrefix } },
-      }),
-      elastic.deleteByQuery({
-        index: RUNS_INDEX,
-        query: { prefix: { id: testPrefix } },
-      }),
-      elastic.deleteByQuery({
-        index: EVENTS_INDEX,
-        query: {
-          bool: {
-            should: [
-              { prefix: { runId: testPrefix } },
-              { prefix: { experimentId: testPrefix } },
-            ],
-            minimum_should_match: 1,
-          },
-        },
-      }),
+      db.query("delete from products where id like $1", [`${testPrefix}%`]),
+      db.query(
+        "delete from carts where doc->'product_ids' @> $1::jsonb",
+        [JSON.stringify([`${testPrefix}-product`])],
+      ),
+      db.query("delete from experiments where id like $1", [`${testPrefix}%`]),
+      db.query("delete from runs where id like $1", [`${testPrefix}%`]),
+      db.query(
+        "delete from events where doc->>'runId' like $1 or doc->>'experimentId' like $1",
+        [`${testPrefix}%`],
+      ),
     ]);
-    await elastic.close();
+    await db.end();
   });
 
   it("creates, reads, updates, deletes products and emits a PayPal CSV feed", async () => {
@@ -161,7 +145,7 @@ describe("AgentShelf with local Elasticsearch", () => {
     expect(Object.keys(status).sort()).toEqual([
       "astropods",
       "channel3",
-      "elastic",
+      "database",
       "kernel",
       "paypal",
       "render",
@@ -361,18 +345,19 @@ describe("AgentShelf with local Elasticsearch", () => {
     expect(shuffleShelf(product, competitors, runId)).toEqual(first);
     expect(shuffleShelf(product, competitors, `${runId}-other`)).not.toEqual(first);
 
-    const event = await writeEvent(elastic, {
+    const event = await writeEvent(db, {
       experimentId,
       runId,
       stage: "shelf_viewed",
       ok: true,
     });
-    const storedEvent = await elastic.get<{ stage: string; runId: string }>({
-      index: "agentshelf-events",
-      id: event.id,
-    });
-    expect(storedEvent._source?.stage).toBe("shelf_viewed");
-    expect(storedEvent._source?.runId).toBe(runId);
+    const storedEvent = await getDoc<{ stage: string; runId: string }>(
+      db,
+      EVENTS_TABLE,
+      event.id,
+    );
+    expect(storedEvent?.stage).toBe("shelf_viewed");
+    expect(storedEvent?.runId).toBe(runId);
 
     const run = {
       id: runId,
@@ -384,23 +369,13 @@ describe("AgentShelf with local Elasticsearch", () => {
       shelf_order: first,
       status: "pending",
     };
-    await elastic.index({
-      index: RUNS_INDEX,
-      id: runId,
-      document: run,
-      refresh: "wait_for",
-    });
-    await elastic.index({
-      index: EXPERIMENTS_INDEX,
-      id: experimentId,
-      document: {
+    await putDoc(db, RUNS_TABLE, runId, run);
+    await putDoc(db, EXPERIMENTS_TABLE, experimentId, {
         id: experimentId,
         product_id: product.id,
         query: "insulated water bottle",
         status: "running",
         competitors,
-      },
-      refresh: "wait_for",
     });
 
     const shelf = await request(app, "GET", `/shelf/${experimentId}?run=${runId}`);
@@ -412,12 +387,13 @@ describe("AgentShelf with local Elasticsearch", () => {
     const selected = await request(app, "GET", `/out/${runId}/0`);
     expect(selected.status).toBe(200);
     expect(await selected.text()).toContain("Your run is complete.");
-    const updatedRun = await elastic.get<{ chosen_is_merchant: boolean; chosen_position: number }>({
-      index: RUNS_INDEX,
-      id: runId,
-    });
-    expect(updatedRun._source?.chosen_is_merchant).toBe(false);
-    expect(updatedRun._source?.chosen_position).toBeGreaterThan(0);
+    const updatedRun = await getDoc<{ chosen_is_merchant: boolean; chosen_position: number }>(
+      db,
+      RUNS_TABLE,
+      runId,
+    );
+    expect(updatedRun?.chosen_is_merchant).toBe(false);
+    expect(updatedRun?.chosen_position).toBeGreaterThan(0);
   });
 
   it("returns live runs with recent steps ordered by run status, model, and step", async () => {
@@ -453,20 +429,12 @@ describe("AgentShelf with local Elasticsearch", () => {
         status: "done",
       },
     ];
-    await elastic.bulk({
-      operations: runDocs.flatMap((document) => [
-        { index: { _index: RUNS_INDEX, _id: document.id } },
-        document,
-      ]),
-      refresh: "wait_for",
-    });
-    await elastic.bulk({
-      operations: [
-        {
-          index: { _index: EVENTS_INDEX, _id: uniqueId() },
-        },
-        {
-          id: uniqueId(),
+    for (const document of runDocs) {
+      await putDoc(db, RUNS_TABLE, document.id, document);
+    }
+    const stepEvents = [
+      {
+        id: uniqueId(),
           experimentId,
           runId: runningId,
           stage: "agent_step",
@@ -475,12 +443,9 @@ describe("AgentShelf with local Elasticsearch", () => {
           detail: "Email: buyer@example.com",
           ok: true,
           ts: "2026-01-01T00:00:02.000Z",
-        },
-        {
-          index: { _index: EVENTS_INDEX, _id: uniqueId() },
-        },
-        {
-          id: uniqueId(),
+      },
+      {
+        id: uniqueId(),
           experimentId,
           runId: runningId,
           stage: "agent_step",
@@ -489,10 +454,11 @@ describe("AgentShelf with local Elasticsearch", () => {
           detail: "Everyday bottle",
           ok: true,
           ts: "2026-01-01T00:00:01.000Z",
-        },
-      ],
-      refresh: "wait_for",
-    });
+      },
+    ];
+    for (const event of stepEvents) {
+      await putDoc(db, EVENTS_TABLE, event.id, event);
+    }
 
     const response = await request(app, "GET", `/api/experiments/${experimentId}/live`);
     expect(response.status).toBe(200);
@@ -564,14 +530,9 @@ describe("AgentShelf with local Elasticsearch", () => {
     await once(server, "listening");
     const address = server.address() as AddressInfo;
     const imageProductId = uniqueId();
-    await elastic.index({
-      index: PRODUCTS_INDEX,
-      id: imageProductId,
-      document: {
+    await putDoc(db, PRODUCTS_TABLE, imageProductId, {
         id: imageProductId,
         image_url: `http://127.0.0.1:${address.port}/not-image`,
-      },
-      refresh: "wait_for",
     });
     try {
       const response = await request(app, "GET", `/api/img/product/${imageProductId}`);
@@ -580,7 +541,7 @@ describe("AgentShelf with local Elasticsearch", () => {
       await new Promise<void>((resolve, reject) => {
         server.close((error) => error ? reject(error) : resolve());
       });
-      await elastic.delete({ index: PRODUCTS_INDEX, id: imageProductId, refresh: "wait_for" });
+      await deleteDoc(db, PRODUCTS_TABLE, imageProductId);
     }
   });
 
@@ -616,7 +577,7 @@ describe("AgentShelf with local Elasticsearch", () => {
     expect(specs.every((spec) => spec.productId === product.id)).toBe(true);
   });
 
-  it("computes experiment analytics with Elasticsearch aggregations", async () => {
+  it("computes experiment analytics", async () => {
     const experimentId = uniqueId();
     const runDocs = [
       {
@@ -655,13 +616,9 @@ describe("AgentShelf with local Elasticsearch", () => {
         failure_reason: "Checkout could not continue",
       },
     ];
-    await elastic.bulk({
-      operations: runDocs.flatMap((document) => [
-        { index: { _index: RUNS_INDEX, _id: document.id } },
-        document,
-      ]),
-      refresh: "wait_for",
-    });
+    for (const document of runDocs) {
+      await putDoc(db, RUNS_TABLE, document.id, document);
+    }
 
     const response = await request(
       app,

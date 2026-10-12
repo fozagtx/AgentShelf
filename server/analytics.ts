@@ -1,7 +1,5 @@
-import type { Client } from "@elastic/elasticsearch";
-import { RUNS_INDEX } from "./elastic.js";
-
-export const ANALYTICS_INDEX = RUNS_INDEX;
+import type { Db } from "./db.js";
+import { findDocs, RUNS_TABLE } from "./db.js";
 
 const funnelStages = [
   "shelf_viewed",
@@ -88,15 +86,15 @@ export function buildTakeaway(
   const overallFor = (variant: string) => {
     const rows = shareByModel.filter((row) => row.variant === variant && row.runs > 0);
     const runs = rows.reduce((total, row) => total + row.runs, 0);
-    if (!runs) return null;
-    const picks = rows.reduce((total, row) => total + row.merchantPicks, 0);
-    return picks / runs;
+    return runs
+      ? rows.reduce((total, row) => total + row.merchantPicks, 0) / runs
+      : null;
   };
   const originalShare = overallFor("original");
   const fixedShare = overallFor("fixed");
-  const overall = originalShare === null || fixedShare === null
-    ? null
-    : { originalShare, fixedShare };
+  const overall = originalShare !== null && fixedShare !== null
+    ? { originalShare, fixedShare }
+    : null;
 
   const breakCounts = new Map<string, { model: string; stage: string; count: number }>();
   for (const failure of failures) {
@@ -126,83 +124,58 @@ export function buildTakeaway(
     headline += ` Checkout broke most often at ${stageLabel} for ${topBreak.model} (${topBreak.count} runs).`;
   }
 
-  return {
-    headline,
-    bestFix,
-    topBreak,
-    overall,
-  };
+  return { headline, bestFix, topBreak, overall };
 }
 
-export async function getExperimentAnalytics(client: Client, experimentId: string) {
-  const response = await client.search<Record<string, any>>({
-    index: RUNS_INDEX,
-    size: 1000,
-    query: { term: { experiment_id: experimentId } },
-    sort: [{ created_at: "asc" }],
-    aggs: {
-      model: {
-        terms: { field: "model", size: 50 },
-        aggs: {
-          furthest_stages: {
-            terms: { field: "furthest_stage", size: funnelStages.length },
-          },
-          variant: {
-            terms: { field: "variant", size: 5 },
-            aggs: {
-              merchant_picks: { filter: { term: { chosen_is_merchant: true } } },
-            },
-          },
-        },
-      },
-      positions: {
-        terms: { field: "chosen_position", size: 20 },
-        aggs: {
-          merchant_picks: { filter: { term: { chosen_is_merchant: true } } },
-        },
-      },
-    },
+export async function getExperimentAnalytics(db: Db, experimentId: string) {
+  const runs = await findDocs<Record<string, any>>(db, RUNS_TABLE, {
+    where: { experiment_id: experimentId },
+    orderBy: "created_at",
   });
-  const aggregations = response.aggregations as any;
-  const shareByModel = (aggregations?.model?.buckets ?? []).flatMap((model: any) =>
-    (model.variant?.buckets ?? []).map((variant: any) => {
-      const runs = Number(variant.doc_count);
-      const merchantPicks = Number(variant.merchant_picks?.doc_count ?? 0);
-      return {
-        model: String(model.key),
-        variant: String(variant.key),
-        runs,
-        merchantPicks,
-        share: runs ? merchantPicks / runs : 0,
-      };
-    }),
+  const models = groupTerms(runs, (run) => stringTerm(run.model)).slice(0, 50);
+  const shareByModel = models.flatMap(({ key: model, docs: modelRuns }) =>
+    groupTerms(modelRuns, (run) => stringTerm(run.variant))
+      .slice(0, 5)
+      .map(({ key: variant, docs: variantRuns }) => {
+        const merchantPicks = variantRuns.filter((run) => run.chosen_is_merchant === true).length;
+        return {
+          model,
+          variant,
+          runs: variantRuns.length,
+          merchantPicks,
+          share: variantRuns.length ? merchantPicks / variantRuns.length : 0,
+        };
+      }),
   );
-  const positionBias = (aggregations?.positions?.buckets ?? []).map((position: any) => {
-    const runs = Number(position.doc_count);
-    const picks = Number(position.merchant_picks?.doc_count ?? 0);
-    return {
-      position: Number(position.key),
-      runs,
-      picks,
-      share: runs ? picks / runs : 0,
-    };
-  });
+  const positionBias = groupTerms(
+    runs.filter((run) => run.chosen_position !== undefined && run.chosen_position !== null),
+    (run) => numberTerm(run.chosen_position),
+  )
+    .slice(0, 20)
+    .map(({ key: position, docs }) => {
+      const picks = docs.filter((run) => run.chosen_is_merchant === true).length;
+      return {
+        position,
+        runs: docs.length,
+        picks,
+        share: docs.length ? picks / docs.length : 0,
+      };
+    });
 
-  const runs = response.hits.hits.flatMap((hit) => hit._source ? [hit._source] : []);
-  const modelBuckets = aggregations?.model?.buckets ?? [];
-  const funnel = modelBuckets.flatMap((modelBucket: any) => {
-    const model = String(modelBucket.key);
-    const stageBuckets = modelBucket.furthest_stages?.buckets ?? [];
+  const funnel = models.flatMap(({ key: model, docs: modelRuns }) => {
+    const stageBuckets = groupTerms(modelRuns, (run) => stringTerm(run.furthest_stage))
+      .slice(0, funnelStages.length);
     return funnelStages.map((stage, stageIndex) => ({
       model,
       stage,
-      count: stageBuckets.reduce((total: number, bucket: any) =>
-        total + (funnelStages.indexOf(String(bucket.key) as typeof funnelStages[number]) >= stageIndex
-          ? Number(bucket.doc_count)
+      count: stageBuckets.reduce((total, bucket) =>
+        total + (funnelStages.indexOf(bucket.key as typeof funnelStages[number]) >= stageIndex
+          ? bucket.docs.length
           : 0),
       0),
     }));
   });
+
   const failures = runs
     .filter((run) => Boolean(run.failure_stage))
     .map((run) => ({
@@ -213,6 +186,7 @@ export async function getExperimentAnalytics(client: Client, experimentId: strin
       reason: String(run.failure_reason ?? ""),
       replayUrl: run.replay_view_url ? String(run.replay_view_url) : null,
     }));
+
   return {
     shareByModel,
     positionBias,
@@ -220,4 +194,37 @@ export async function getExperimentAnalytics(client: Client, experimentId: strin
     failures,
     takeaway: buildTakeaway(shareByModel, failures),
   };
+}
+
+function groupTerms<T, K extends string | number>(
+  docs: T[],
+  keyFor: (doc: T) => K | undefined,
+): { key: K; docs: T[] }[] {
+  const groups = new Map<K, T[]>();
+  for (const doc of docs) {
+    const key = keyFor(doc);
+    if (key === undefined) continue;
+    const values = groups.get(key) ?? [];
+    values.push(doc);
+    groups.set(key, values);
+  }
+  return [...groups.entries()]
+    .map(([key, values]) => ({ key, docs: values }))
+    .sort((left, right) =>
+      right.docs.length - left.docs.length ||
+      (typeof left.key === "number" && typeof right.key === "number"
+        ? left.key - right.key
+        : String(left.key).localeCompare(String(right.key))),
+    );
+}
+
+function stringTerm(value: unknown) {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function numberTerm(value: unknown) {
+  const number = Number(value);
+  return value !== undefined && value !== null && Number.isFinite(number)
+    ? number
+    : undefined;
 }

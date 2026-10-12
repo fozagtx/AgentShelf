@@ -1,16 +1,14 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { Client } from "@elastic/elasticsearch";
+import pg from "pg";
 import { Ajv } from "ajv";
 import * as formats from "ajv-formats";
 import type { Hono } from "hono";
 
 export const testPrefix = `test-${randomUUID()}`;
-export const elastic = new Client({
-  node: process.env.ELASTIC_URL ?? "http://127.0.0.1:9200",
-  ...(process.env.ELASTIC_API_KEY
-    ? { auth: { apiKey: process.env.ELASTIC_API_KEY } }
-    : {}),
+export const db = new pg.Pool({
+  connectionString: process.env.DATABASE_URL ??
+    "postgres://postgres:postgres@127.0.0.1:5432/agentshelf",
 });
 
 export function createSchemaValidator() {

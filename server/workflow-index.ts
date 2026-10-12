@@ -1,6 +1,6 @@
-import { createElasticClient, ensureIndices } from "./elastic.js";
+import { createDb, ensureSchema } from "./db.js";
 import { createWorkflowTasks } from "./workflows.js";
 
-const elastic = createElasticClient();
-await ensureIndices(elastic);
-createWorkflowTasks(elastic);
+const db = createDb();
+await ensureSchema(db);
+createWorkflowTasks(db);

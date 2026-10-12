@@ -87,7 +87,7 @@ function HowItWorks() {
   );
 }
 
-const LOGOS: [string, string][] = [["PayPal", "paypal.png"], ["Channel3", "channel3.png"], ["KERNEL", "kernel.svg"], ["Render", "render.svg"], ["Elastic", "elastic.svg"], ["AG Grid", "aggrid.svg"], ["Astropods", "astropods.svg"]];
+const LOGOS: [string, string][] = [["PayPal", "paypal.png"], ["Channel3", "channel3.png"], ["KERNEL", "kernel.svg"], ["Render", "render.svg"], ["AG Grid", "aggrid.svg"], ["Astropods", "astropods.svg"]];
 
 function Logos() {
   return (

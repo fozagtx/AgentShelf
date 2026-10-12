@@ -1,12 +1,13 @@
-import type { Client } from "@elastic/elasticsearch";
+import type { Db } from "./db.js";
 import { Hono } from "hono";
 import { getAppUrl } from "./config.js";
 import {
-  EXPERIMENTS_INDEX,
-  PRODUCTS_INDEX,
-  RUNS_INDEX,
-  getDocument,
-} from "./elastic.js";
+  EXPERIMENTS_TABLE,
+  getDoc,
+  patchDoc,
+  PRODUCTS_TABLE,
+  RUNS_TABLE,
+} from "./db.js";
 import { writeEvent } from "./events.js";
 import { mintPlatformToken } from "./platform.js";
 import { missingPayPalCredentials } from "./paypal.js";
@@ -18,32 +19,27 @@ const selectedShipping = [
   { id: "express", name: "Express Shipping", price: { currency_code: "USD", value: "15.00" }, is_selected: false },
 ];
 
-export function createPageRoutes(client: Client) {
+export function createPageRoutes(db: Db) {
   const app = new Hono();
 
   app.get("/shelf/:experimentId", async (c) => {
     const experimentId = c.req.param("experimentId");
     const runId = c.req.query("run") ?? "";
     const [experiment, run] = await Promise.all([
-      getDocument<Record<string, any>>(client, EXPERIMENTS_INDEX, experimentId),
-      getDocument<Record<string, any>>(client, RUNS_INDEX, runId),
+      getDoc<Record<string, any>>(db, EXPERIMENTS_TABLE, experimentId),
+      getDoc<Record<string, any>>(db, RUNS_TABLE, runId),
     ]);
     if (!experiment || !run || run.experiment_id !== experimentId) {
       return page(c, "Shelf unavailable", `<main><h1>Shelf unavailable</h1><p>This experiment run was not found.</p></main>`, 404);
     }
-    const product = await getProduct(client, String(experiment.product_id));
+    const product = await getProduct(db, String(experiment.product_id));
     if (!product) return page(c, "Shelf unavailable", `<main><h1>Shelf unavailable</h1><p>The merchant product is no longer available.</p></main>`, 404);
     const competitors = Array.isArray(experiment.competitors) ? experiment.competitors : [];
     const order = Array.isArray(run.shelf_order) && run.shelf_order.length
       ? run.shelf_order as ShelfEntry[]
       : shuffleShelf(product, competitors, runId);
-    await client.update({
-      index: RUNS_INDEX,
-      id: runId,
-      doc: { shelf_order: order },
-      refresh: "wait_for",
-    });
-    await writeEvent(client, { experimentId, runId, stage: "shelf_viewed", ok: true });
+    await patchDoc(db, RUNS_TABLE, runId, { shelf_order: order });
+    await writeEvent(db, { experimentId, runId, stage: "shelf_viewed", ok: true });
 
     const fixed = run.variant === "fixed" && product.fixed_variant;
     const shown = fixed
@@ -69,13 +65,13 @@ export function createPageRoutes(client: Client) {
   app.get("/out/:runId/:offerIndex", async (c) => {
     const runId = c.req.param("runId");
     const offerIndex = Number(c.req.param("offerIndex"));
-    const run = await getDocument<Record<string, any>>(client, RUNS_INDEX, runId);
+    const run = await getDoc<Record<string, any>>(db, RUNS_TABLE, runId);
     if (!run || !Number.isInteger(offerIndex)) {
       return page(c, "Selection unavailable", `<main><h1>Selection unavailable</h1></main>`, 404);
     }
-    const experiment = await getDocument<Record<string, any>>(
-      client,
-      EXPERIMENTS_INDEX,
+    const experiment = await getDoc<Record<string, any>>(
+      db,
+      EXPERIMENTS_TABLE,
       String(run.experiment_id),
     );
     const competitor = experiment?.competitors?.[offerIndex];
@@ -85,20 +81,15 @@ export function createPageRoutes(client: Client) {
       entry.type === "competitor" && Number(entry.competitorIndex) === offerIndex,
     ) + 1;
     const offer = competitor.offers?.[0] ?? {};
-    await client.update({
-      index: RUNS_INDEX,
-      id: runId,
-      doc: {
+    await patchDoc(db, RUNS_TABLE, runId, {
         status: "complete",
         chosen_offer: offer.url ?? competitor.url,
         chosen_title: competitor.title,
         chosen_is_merchant: false,
         chosen_position: position,
         completed_at: new Date().toISOString(),
-      },
-      refresh: "wait_for",
     });
-    await writeEvent(client, {
+    await writeEvent(db, {
       experimentId: String(run.experiment_id),
       runId,
       stage: "offer_selected",
@@ -112,27 +103,22 @@ export function createPageRoutes(client: Client) {
   });
 
   app.get("/store/:productId", async (c) => {
-    const product = await getProduct(client, c.req.param("productId"));
+    const product = await getProduct(db, c.req.param("productId"));
     const runId = c.req.query("run") ?? "";
     if (!product) return page(c, "Product unavailable", `<main><h1>Product unavailable</h1></main>`, 404);
-    const run = await getDocument<Record<string, any>>(client, RUNS_INDEX, runId);
+    const run = await getDoc<Record<string, any>>(db, RUNS_TABLE, runId);
     const fixed = run?.variant === "fixed" && product.fixed_variant;
     const shown = fixed ? { ...product, ...product.fixed_variant } : product;
     const shelfOrder = (run?.shelf_order ?? []) as ShelfEntry[];
     const position = shelfOrder.findIndex((entry) => entry.type === "merchant") + 1;
     if (run) {
-      await client.update({
-        index: RUNS_INDEX,
-        id: runId,
-        doc: {
+      await patchDoc(db, RUNS_TABLE, runId, {
           chosen_offer: product.url,
           chosen_title: shown.title,
           chosen_is_merchant: true,
           chosen_position: position,
-        },
-        refresh: "wait_for",
       });
-      await writeEvent(client, {
+      await writeEvent(db, {
         runId,
         experimentId: String(run.experiment_id),
         stage: "offer_selected",
@@ -143,7 +129,7 @@ export function createPageRoutes(client: Client) {
         chosen_title: shown.title,
       });
     }
-    await writeEvent(client, {
+    await writeEvent(db, {
       runId,
       experimentId: String(run?.experiment_id ?? ""),
       stage: "product_viewed",
@@ -154,12 +140,12 @@ export function createPageRoutes(client: Client) {
 
   app.post("/store/:productId/checkout", async (c) => {
     const runId = c.req.query("run") ?? "";
-    const product = await getProduct(client, c.req.param("productId"));
+    const product = await getProduct(db, c.req.param("productId"));
     if (!product) return page(c, "Checkout unavailable", `<main><h1>Product unavailable</h1></main>`, 404);
     const missing = missingPayPalCredentials();
     if (missing.length) {
       const message = `PayPal sandbox checkout is unavailable. Missing environment variables: ${missing.join(", ")}.`;
-      await writeEvent(client, {
+      await writeEvent(db, {
         runId,
         stage: "cart_create_failed",
         ok: false,
@@ -191,7 +177,7 @@ export function createPageRoutes(client: Client) {
       available_shipping_options: shippingOptions,
     };
     try {
-      const token = await mintPlatformToken(client);
+      const token = await mintPlatformToken(db);
       const returnUrl = `${getAppUrl()}/checkout/return?run=${encodeURIComponent(runId)}`;
       const cancelUrl = `${getAppUrl()}/store/${encodeURIComponent(product.id)}?run=${encodeURIComponent(runId)}`;
       const createdResponse = await cartRequest(
@@ -203,7 +189,7 @@ export function createPageRoutes(client: Client) {
       );
       if (!createdResponse.ok) throw new Error(await apiError(createdResponse));
       const created = await createdResponse.json() as Record<string, any>;
-      await writeEvent(client, { runId, stage: "cart_created", ok: true });
+      await writeEvent(db, { runId, stage: "cart_created", ok: true });
 
       const updatedResponse = await cartRequest(
         `/api/paypal/v1/merchant-cart/${encodeURIComponent(String(created.id))}`,
@@ -214,27 +200,22 @@ export function createPageRoutes(client: Client) {
       );
       if (!updatedResponse.ok) throw new Error(await apiError(updatedResponse));
       const updated = await updatedResponse.json() as Record<string, any>;
-      await writeEvent(client, { runId, stage: "cart_updated", ok: true });
+      await writeEvent(db, { runId, stage: "cart_updated", ok: true });
       const approvalUrl = updated.payment_method?.approval_url;
       if (!approvalUrl || !updated.payment_method?.token) {
         throw new Error("PayPal did not return an approval URL for the sandbox order.");
       }
-      const run = await getDocument<Record<string, any>>(client, RUNS_INDEX, runId);
+      const run = await getDoc<Record<string, any>>(db, RUNS_TABLE, runId);
       const merchantIndex = (run?.shelf_order as ShelfEntry[] | undefined)
         ?.findIndex((entry) => entry.type === "merchant") ?? -1;
-      await client.update({
-        index: RUNS_INDEX,
-        id: runId,
-        doc: {
+      await patchDoc(db, RUNS_TABLE, runId, {
           cart_id: created.id,
           paypal_order_id: updated.payment_method.token,
           chosen_title: product.title,
           chosen_is_merchant: true,
           chosen_position: merchantIndex + 1,
-        },
-        refresh: "wait_for",
       });
-      await writeEvent(client, {
+      await writeEvent(db, {
         runId,
         stage: "approval_redirected",
         ok: true,
@@ -244,18 +225,18 @@ export function createPageRoutes(client: Client) {
       return c.redirect(approvalUrl, 302);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Cart checkout failed.";
-      await writeEvent(client, { runId, stage: "checkout_failed", ok: false, error: message });
+      await writeEvent(db, { runId, stage: "checkout_failed", ok: false, error: message });
       return page(c, "Checkout failed", `<main><h1>Checkout failed</h1><p>${escapeHtml(message)}</p></main>`, 502);
     }
   });
 
   app.get("/checkout/return", async (c) => {
     const runId = c.req.query("run") ?? "";
-    const run = await getDocument<Record<string, any>>(client, RUNS_INDEX, runId);
+    const run = await getDoc<Record<string, any>>(db, RUNS_TABLE, runId);
     if (!run?.cart_id) return page(c, "Checkout unavailable", `<main><h1>Checkout unavailable</h1><p>No cart is linked to this run.</p></main>`, 404);
-    await writeEvent(client, { runId, stage: "approval_returned", ok: true });
+    await writeEvent(db, { runId, stage: "approval_returned", ok: true });
     try {
-      const token = await mintPlatformToken(client);
+      const token = await mintPlatformToken(db);
       const result = await cartRequest(
         `/api/paypal/v1/merchant-cart/${encodeURIComponent(String(run.cart_id))}/checkout`,
         token,
@@ -265,24 +246,19 @@ export function createPageRoutes(client: Client) {
       if (!result.ok) throw new Error(await apiError(result));
       const confirmation = await result.json() as Record<string, any>;
       const captureStatus = confirmation.payment_confirmation?.status ?? confirmation.status;
-      await client.update({
-        index: RUNS_INDEX,
-        id: runId,
-        doc: {
+      await patchDoc(db, RUNS_TABLE, runId, {
           status: "complete",
           capture_status: captureStatus,
           chosen_is_merchant: true,
           chosen_title: run.chosen_title,
           furthest_stage: "captured",
           completed_at: new Date().toISOString(),
-        },
-        refresh: "wait_for",
       });
-      await writeEvent(client, { runId, stage: "captured", ok: true, capture_status: captureStatus });
+      await writeEvent(db, { runId, stage: "captured", ok: true, capture_status: captureStatus });
       return page(c, "Order confirmed", `<main class="confirmation-page"><h1>Order confirmed</h1><p>Your PayPal sandbox order has been captured.</p><p>Order ${escapeHtml(String(confirmation.payment_confirmation?.merchant_order_number ?? run.paypal_order_id))}</p><p>Status: ${escapeHtml(String(captureStatus ?? "captured"))}</p></main>`);
     } catch (error) {
       const message = error instanceof Error ? error.message : "PayPal capture failed.";
-      await writeEvent(client, { runId, stage: "capture_failed", ok: false, error: message });
+      await writeEvent(db, { runId, stage: "capture_failed", ok: false, error: message });
       return page(c, "Capture failed", `<main><h1>Capture failed</h1><p>${escapeHtml(message)}</p></main>`, 502);
     }
   });

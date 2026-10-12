@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
-import type { Client } from "@elastic/elasticsearch";
+import type { Db } from "./db.js";
 import { Hono } from "hono";
 import { jwtVerify } from "jose";
 import { getAppUrl, PLATFORM_AUDIENCE, PLATFORM_ISSUER } from "./config.js";
-import { CARTS_INDEX, getDocument } from "./elastic.js";
+import { CARTS_TABLE, getDoc, putDoc } from "./db.js";
 import type { PlatformKey } from "./platform.js";
 import { getProduct, type Product } from "./products.js";
 import {
@@ -18,7 +18,7 @@ const defaultShipping = [
   { id: "express", name: "Express", description: "Expedited delivery", price: { currency_code: "USD", value: "15.00" }, is_selected: false },
 ];
 
-export function createMerchantRoutes(client: Client, key: PlatformKey) {
+export function createMerchantRoutes(db: Db, key: PlatformKey) {
   const app = new Hono();
 
   const authenticate = async (c: any, next: () => Promise<void>) => {
@@ -52,7 +52,7 @@ export function createMerchantRoutes(client: Client, key: PlatformKey) {
     const paypal = createPayPalClientFromEnv();
     const input = await readBody(c);
     if (!input.ok) return c.json(errorBody("INVALID_REQUEST", "Request body must be valid JSON."), 400);
-    const built = await buildCart(client, input.body, randomUUID());
+    const built = await buildCart(db, input.body, randomUUID());
     if (built instanceof Response) return built;
     const invalid = validateShippingDestination(built.shipping_address);
     if (invalid) return invalid;
@@ -70,14 +70,14 @@ export function createMerchantRoutes(client: Client, key: PlatformKey) {
         return paypalFailure(c, error);
       }
     }
-    await saveCart(client, built);
+    await saveCart(db, built);
     return c.json(built, 201);
   });
 
   app.get("/merchant-cart/:cartId", async (c) => {
-    const stored = await getDocument<{ cart: Record<string, any> }>(
-      client,
-      CARTS_INDEX,
+    const stored = await getDoc<{ cart: Record<string, any> }>(
+      db,
+      CARTS_TABLE,
       c.req.param("cartId"),
     );
     return stored
@@ -88,11 +88,11 @@ export function createMerchantRoutes(client: Client, key: PlatformKey) {
   app.put("/merchant-cart/:cartId", async (c) => {
     const paypal = createPayPalClientFromEnv();
     const id = c.req.param("cartId");
-    const previous = await getDocument<{ cart: Record<string, any> }>(client, CARTS_INDEX, id);
+    const previous = await getDoc<{ cart: Record<string, any> }>(db, CARTS_TABLE, id);
     if (!previous) return c.json(errorBody("RESOURCE_NOT_FOUND", "Cart was not found."), 404);
     const input = await readBody(c);
     if (!input.ok) return c.json(errorBody("INVALID_REQUEST", "Request body must be valid JSON."), 400);
-    const built = await buildCart(client, input.body, id);
+    const built = await buildCart(db, input.body, id);
     if (built instanceof Response) return built;
     const invalid = validateShippingDestination(built.shipping_address);
     if (invalid) return invalid;
@@ -108,13 +108,13 @@ export function createMerchantRoutes(client: Client, key: PlatformKey) {
         return paypalFailure(c, error);
       }
     }
-    await saveCart(client, built);
+    await saveCart(db, built);
     return c.json(built);
   });
 
   app.post("/merchant-cart/:cartId/checkout", async (c) => {
     const id = c.req.param("cartId");
-    const previous = await getDocument<{ cart: Record<string, any> }>(client, CARTS_INDEX, id);
+    const previous = await getDoc<{ cart: Record<string, any> }>(db, CARTS_TABLE, id);
     if (!previous) return c.json(errorBody("RESOURCE_NOT_FOUND", "Cart was not found."), 404);
     const input = await readBody(c);
     if (!input.ok) return c.json(errorBody("INVALID_REQUEST", "Request body must be valid JSON."), 400);
@@ -133,7 +133,7 @@ export function createMerchantRoutes(client: Client, key: PlatformKey) {
     try {
       const capture = await paypal.captureOrder(token);
       const completed = { ...previous.cart, status: "COMPLETED" };
-      await saveCart(client, completed);
+      await saveCart(db, completed);
       return c.json({
         ...completed,
         payment_confirmation: {
@@ -148,7 +148,7 @@ export function createMerchantRoutes(client: Client, key: PlatformKey) {
   return app;
 }
 
-async function buildCart(client: Client, input: Record<string, any>, id: string) {
+async function buildCart(db: Db, input: Record<string, any>, id: string) {
   if (!Array.isArray(input.items) || input.items.length === 0) {
     return businessError("DATA_ERROR", "MISSING_FIELD", "At least one cart item is required.", {
       specific_issue: "REQUIRED_FIELD_MISSING",
@@ -159,7 +159,7 @@ async function buildCart(client: Client, input: Record<string, any>, id: string)
   const items: Record<string, any>[] = [];
   const productIds: string[] = [];
   for (const requested of input.items) {
-    const product = await getProduct(client, String(requested.variant_id ?? ""));
+    const product = await getProduct(db, String(requested.variant_id ?? ""));
     if (!product) {
       return businessError("DATA_ERROR", "INVALID_DATA", "The requested product variant was not found.", {
         specific_issue: "ITEM_NOT_FOUND",
@@ -288,11 +288,8 @@ function calculateTotals(items: Record<string, any>[], options: Record<string, a
   };
 }
 
-async function saveCart(client: Client, cart: Record<string, any>) {
-  await client.index({
-    index: CARTS_INDEX,
-    id: cart.id,
-    document: {
+async function saveCart(db: Db, cart: Record<string, any>) {
+  await putDoc(db, CARTS_TABLE, cart.id, {
       id: cart.id,
       status: cart.status,
       product_ids: cart.product_ids,
@@ -300,8 +297,6 @@ async function saveCart(client: Client, cart: Record<string, any>) {
       created_at: cart.created_at ?? new Date().toISOString(),
       updated_at: new Date().toISOString(),
       cart,
-    },
-    refresh: "wait_for",
   });
 }
 

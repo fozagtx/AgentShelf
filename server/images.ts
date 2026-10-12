@@ -1,23 +1,23 @@
-import type { Client } from "@elastic/elasticsearch";
+import type { Db } from "./db.js";
 import { Hono, type Context } from "hono";
-import { EXPERIMENTS_INDEX, PRODUCTS_INDEX, getDocument } from "./elastic.js";
+import { EXPERIMENTS_TABLE, PRODUCTS_TABLE, getDoc } from "./db.js";
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const IMAGE_TIMEOUT_MS = 10_000;
 
-export function createImageRoutes(client: Client) {
+export function createImageRoutes(db: Db) {
   const app = new Hono();
 
   app.get("/api/img/product/:id", async (c) => {
-    const product = await getDocument<Record<string, any>>(client, PRODUCTS_INDEX, c.req.param("id"));
+    const product = await getDoc<Record<string, any>>(db, PRODUCTS_TABLE, c.req.param("id"));
     if (!product?.image_url) return c.json({ message: "Product image not found." }, 404);
     return fetchStoredImage(c, String(product.image_url));
   });
 
   app.get("/api/img/competitor/:experimentId/:index", async (c) => {
-    const experiment = await getDocument<Record<string, any>>(
-      client,
-      EXPERIMENTS_INDEX,
+    const experiment = await getDoc<Record<string, any>>(
+      db,
+      EXPERIMENTS_TABLE,
       c.req.param("experimentId"),
     );
     const index = Number(c.req.param("index"));

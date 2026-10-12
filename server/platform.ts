@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import type { Client } from "@elastic/elasticsearch";
 import {
   exportJWK,
   generateKeyPair,
@@ -8,7 +7,8 @@ import {
   type JWK,
 } from "jose";
 import { PLATFORM_AUDIENCE, PLATFORM_ISSUER } from "./config.js";
-import { KEYS_INDEX } from "./elastic.js";
+import type { Db } from "./db.js";
+import { getDoc, KEYS_TABLE, putDoc } from "./db.js";
 
 export interface PlatformKey {
   privateKey: Parameters<SignJWT["sign"]>[0];
@@ -19,19 +19,12 @@ export interface PlatformKey {
 
 const KEY_ID = "agentshelf-platform-rs256";
 
-export async function loadPlatformKey(client: Client): Promise<PlatformKey> {
-  let stored: { private_jwk?: JWK; public_jwk?: JWK } | null = null;
-  try {
-    const response = await client.get<{ private_jwk: JWK; public_jwk: JWK }>({
-      index: KEYS_INDEX,
-      id: KEY_ID,
-    });
-    stored = response._source ?? null;
-  } catch (error) {
-    if ((error as { meta?: { statusCode?: number } }).meta?.statusCode !== 404) {
-      throw error;
-    }
-  }
+export async function loadPlatformKey(db: Db): Promise<PlatformKey> {
+  const stored = await getDoc<{ private_jwk?: JWK; public_jwk?: JWK }>(
+    db,
+    KEYS_TABLE,
+    KEY_ID,
+  );
 
   if (!stored) {
     const keys = await generateKeyPair("RS256", { modulusLength: 2048, extractable: true });
@@ -43,25 +36,13 @@ export async function loadPlatformKey(client: Client): Promise<PlatformKey> {
     publicJwk.kid = KEY_ID;
     publicJwk.alg = "RS256";
     publicJwk.use = "sig";
-    try {
-      await client.index({
-        index: KEYS_INDEX,
-        id: KEY_ID,
-        document: {
-          id: KEY_ID,
-          private_jwk: privateJwk,
-          public_jwk: publicJwk,
-          created_at: new Date().toISOString(),
-        },
-        refresh: "wait_for",
-        op_type: "create",
-      });
-    } catch (error) {
-      if ((error as { meta?: { statusCode?: number } }).meta?.statusCode !== 409) {
-        throw error;
-      }
-    }
-    return loadPlatformKey(client);
+    await putDoc(db, KEYS_TABLE, KEY_ID, {
+      id: KEY_ID,
+      private_jwk: privateJwk,
+      public_jwk: publicJwk,
+      created_at: new Date().toISOString(),
+    });
+    return loadPlatformKey(db);
   }
 
   if (!stored.private_jwk || !stored.public_jwk) {
@@ -75,8 +56,8 @@ export async function loadPlatformKey(client: Client): Promise<PlatformKey> {
   };
 }
 
-export async function mintPlatformToken(client: Client, merchantId = "agentshelf") {
-  const key = await loadPlatformKey(client);
+export async function mintPlatformToken(db: Db, merchantId = "agentshelf") {
+  const key = await loadPlatformKey(db);
   return new SignJWT({ merchant_id: merchantId, scope: ["cart"] })
     .setProtectedHeader({ alg: "RS256", kid: key.kid, typ: "JWT" })
     .setIssuer(PLATFORM_ISSUER)

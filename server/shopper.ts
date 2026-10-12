@@ -5,13 +5,20 @@ import type {
   ChatCompletionMessageParam,
   ChatCompletionTool,
 } from "openai/resources/chat/completions";
-import type { Client } from "@elastic/elasticsearch";
+import type { Db } from "./db.js";
 import {
   getAppUrl,
   SHOPPER_MAX_ACTIONS,
   SHOPPER_TIMEOUT_MS,
 } from "./config.js";
-import { EVENTS_INDEX, RUNS_INDEX, getDocument } from "./elastic.js";
+import {
+  EVENTS_TABLE,
+  findDocs,
+  getDoc,
+  patchDoc,
+  putDoc,
+  RUNS_TABLE,
+} from "./db.js";
 import { writeEvent } from "./events.js";
 import { gateway } from "./gateway.js";
 
@@ -271,7 +278,7 @@ export function missingShopperCredentials() {
   ];
 }
 
-export async function runShopper(client: Client, spec: RunSpec) {
+export async function runShopper(db: Db, spec: RunSpec) {
   const startedAt = Date.now();
   const initial = {
     id: spec.id,
@@ -285,17 +292,12 @@ export async function runShopper(client: Client, spec: RunSpec) {
     status: "running",
     created_at: new Date().toISOString(),
   };
-  await client.index({
-    index: RUNS_INDEX,
-    id: spec.id,
-    document: initial,
-    refresh: "wait_for",
-  });
+  await putDoc(db, RUNS_TABLE, spec.id, initial);
 
   const missing = missingShopperCredentials();
   if (missing.length) {
     return failRun(
-      client,
+      db,
       initial,
       "browser_create",
       `Computer-use shopping is unavailable. Missing environment variables: ${missing.join(", ")}.`,
@@ -321,14 +323,9 @@ export async function runShopper(client: Client, spec: RunSpec) {
     replayId = replay.replay_id;
     replayUrl = replay.replay_view_url;
     liveViewUrl = withReadOnlyQuery(browser.browser_live_view_url);
-    await client.update({
-      index: RUNS_INDEX,
-      id: spec.id,
-      doc: {
+    await patchDoc(db, RUNS_TABLE, spec.id, {
         status: "running",
         ...(liveViewUrl ? { live_view_url: liveViewUrl } : {}),
-      },
-      refresh: "wait_for",
     });
     cdpBrowser = await chromium.connectOverCDP(browser.cdp_ws_url);
     const context = cdpBrowser.contexts()[0] ?? await cdpBrowser.newContext();
@@ -427,7 +424,7 @@ export async function runShopper(client: Client, spec: RunSpec) {
           }
         }
 
-        await writeEvent(client, {
+        await writeEvent(db, {
           experimentId: spec.experimentId,
           runId: spec.id,
           stage: "agent_step",
@@ -484,7 +481,7 @@ export async function runShopper(client: Client, spec: RunSpec) {
   }
 
   if (failure) {
-    await writeEvent(client, {
+    await writeEvent(db, {
       experimentId: spec.experimentId,
       runId: spec.id,
       stage: "shopper_failed",
@@ -492,13 +489,11 @@ export async function runShopper(client: Client, spec: RunSpec) {
       error: failure,
     });
   }
-  const events = await client.search<Record<string, any>>({
-    index: EVENTS_INDEX,
-    size: 1000,
-    query: { term: { runId: spec.id } },
-    sort: [{ ts: "asc" }],
+  const eventDocs = await findDocs<Record<string, any>>(db, EVENTS_TABLE, {
+    where: { runId: spec.id },
+    orderBy: "ts",
+    limit: 1000,
   });
-  const eventDocs = events.hits.hits.flatMap((hit) => hit._source ? [hit._source] : []);
   const order = ["shelf_viewed", "offer_selected", "product_viewed", "cart_created", "cart_updated", "approval_redirected", "approval_returned", "captured"];
   const furthestStage = eventDocs.reduce<string | undefined>((furthest, event) =>
     order.indexOf(event.stage) > order.indexOf(furthest ?? "")
@@ -507,7 +502,7 @@ export async function runShopper(client: Client, spec: RunSpec) {
   undefined);
   const selection = eventDocs.find((event) => event.stage === "offer_selected");
   const errorEvent = eventDocs.find((event) => event.ok === false);
-  const previous = await getDocument<Record<string, any>>(client, RUNS_INDEX, spec.id);
+  const previous = await getDoc<Record<string, any>>(db, RUNS_TABLE, spec.id);
   const run = {
     ...previous,
     ...initial,
@@ -534,7 +529,7 @@ export async function runShopper(client: Client, spec: RunSpec) {
     duration_ms: Date.now() - startedAt,
     completed_at: new Date().toISOString(),
   };
-  await client.index({ index: RUNS_INDEX, id: spec.id, document: run, refresh: "wait_for" });
+  await putDoc(db, RUNS_TABLE, spec.id, run);
   return run;
 }
 
@@ -637,7 +632,7 @@ async function waitForActionSettled(page: Page) {
 }
 
 async function failRun(
-  client: Client,
+  db: Db,
   initial: Record<string, any>,
   stage: string,
   reason: string,
@@ -652,8 +647,8 @@ async function failRun(
     completed_at: new Date().toISOString(),
   };
   await Promise.all([
-    client.index({ index: RUNS_INDEX, id: initial.id, document: run, refresh: "wait_for" }),
-    writeEvent(client, {
+    putDoc(db, RUNS_TABLE, String(initial.id), run),
+    writeEvent(db, {
       experimentId: String(initial.experiment_id),
       runId: String(initial.id),
       stage,

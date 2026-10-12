@@ -3,7 +3,7 @@ export interface Status {
   channel3: boolean;
   kernel: boolean;
   render: boolean;
-  elastic: boolean;
+  database: boolean;
   astropods: boolean;
 }
 

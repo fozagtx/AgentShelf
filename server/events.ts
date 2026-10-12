@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import type { Client } from "@elastic/elasticsearch";
-import { EVENTS_INDEX, getDocument, RUNS_INDEX } from "./elastic.js";
+import type { Db } from "./db.js";
+import { EVENTS_TABLE, getDoc, putDoc, RUNS_TABLE } from "./db.js";
 
 export type EventStage = string;
 
@@ -15,10 +15,10 @@ export interface ShelfEvent {
   [key: string]: unknown;
 }
 
-export async function writeEvent(client: Client, event: ShelfEvent) {
-  const run = await getDocument<Record<string, unknown>>(
-    client,
-    RUNS_INDEX,
+export async function writeEvent(db: Db, event: ShelfEvent) {
+  const run = await getDoc<Record<string, unknown>>(
+    db,
+    RUNS_TABLE,
     event.runId,
   );
   const document = {
@@ -29,11 +29,6 @@ export async function writeEvent(client: Client, event: ShelfEvent) {
     id: randomUUID(),
     ts: new Date().toISOString(),
   };
-  await client.index({
-    index: EVENTS_INDEX,
-    id: document.id,
-    document,
-    refresh: "wait_for",
-  });
+  await putDoc(db, EVENTS_TABLE, document.id, document);
   return document;
 }
