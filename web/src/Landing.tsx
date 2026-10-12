@@ -1,15 +1,32 @@
-import { useRef, useState } from "react";
-import { AnimatePresence, motion, useMotionValueEvent, useScroll, useSpring } from "motion/react";
+import { useRef, useState, type ReactNode } from "react";
+import { AnimatePresence, motion, useInView, useMotionValueEvent, useScroll, useSpring } from "motion/react";
 import { Link } from "./router";
 import { AsciiField } from "./Ascii";
 import { AsciiScene } from "./AsciiScene";
 import { CountUp, EASE, Item, Stagger, Words, hoverCard } from "./motion";
 
-const findings = [
-  { value: <><CountUp to={62.6} decimals={1} suffix="%" /> → <CountUp to={5} suffix="%" /></>, label: "One model update cut a product's share of AI picks from 62.6% to 5%.", source: "ACES study" },
-  { value: <>+<CountUp to={14.9} decimals={1} suffix=" pts" /></>, label: "Editing the product description alone won up to 14.9 points of share.", source: "ACES study" },
-  { value: <><CountUp to={60} />–<CountUp to={100} suffix="%" /></>, label: "Shopping agents took the first offer they saw in most runs.", source: "Microsoft Magentic Marketplace" },
+const findings: { value: ReactNode; was?: string; label: string; source: string; ghost?: number; from: [number, number]; to: [number, number] }[] = [
+  { value: <CountUp from={62.6} to={5} suffix="%" />, was: "62.6%", label: "One model update cut a product's share of AI picks from 62.6% to 5%.", source: "ACES study", ghost: 62.6, from: [0, 62.6], to: [0, 5] },
+  { value: <>+<CountUp to={14.9} decimals={1} /><small>pts</small></>, label: "Editing the product description alone won up to 14.9 points of share.", source: "ACES study", from: [0, 0], to: [0, 14.9] },
+  { value: <><CountUp to={60} />–<CountUp to={100} suffix="%" /></>, label: "Shopping agents took the first offer they saw in most runs.", source: "Microsoft Magentic Marketplace", from: [60, 60], to: [60, 100] },
 ];
+
+function Track({ ghost, from, to }: { ghost?: number; from: [number, number]; to: [number, number] }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const seen = useInView(ref, { once: true, margin: "-80px" });
+  const at = seen ? to : from;
+  return (
+    <div className="track" ref={ref}>
+      {ghost !== undefined && <i style={{ width: `${ghost}%` }} />}
+      <motion.b
+        initial={{ left: `${from[0]}%`, width: `${from[1] - from[0]}%` }}
+        animate={{ left: `${at[0]}%`, width: `${at[1] - at[0]}%` }}
+        transition={{ duration: 1.4, delay: 0.35, ease: EASE }}
+      />
+      <span className="ticks"><em>0</em><em>50</em><em>100%</em></span>
+    </div>
+  );
+}
 
 const steps = [
   { img: "/iso/store.webp", title: "Publish your store", body: "Your products go live on a store that speaks PayPal's Store Sync cart API, so any agent can build a cart and pay." },
@@ -137,15 +154,19 @@ export function Landing() {
       <Logos />
 
       <section id="problem" className="land-section">
-        <Stagger><Item><h2 className="section center">A model update can erase your sales overnight</h2></Item></Stagger>
-        <Stagger className="grid3 findings" gap={0.12}>
-          {findings.map((f) => (
-            <Item key={f.source + f.label}>
-              <motion.div className="card finding" {...hoverCard}>
-                <div className="finding-value">{f.value}</div>
+        <Stagger className="ledger-head"><Item><h2 className="section">A model update can erase your sales overnight</h2></Item></Stagger>
+        <Stagger className="ledger" gap={0.14}>
+          {findings.map((f, i) => (
+            <Item key={f.source + f.label} className="ledger-row">
+              <span className="ledger-n">0{i + 1}</span>
+              <div>
+                <div className="ledger-value"><span>{f.value}</span>{f.was && <s>{f.was}</s>}</div>
+                <Track ghost={f.ghost} from={f.from} to={f.to} />
+              </div>
+              <div className="ledger-copy">
                 <p>{f.label}</p>
                 <span className="meta">{f.source}</span>
-              </motion.div>
+              </div>
             </Item>
           ))}
         </Stagger>

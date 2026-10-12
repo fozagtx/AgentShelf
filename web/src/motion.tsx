@@ -35,10 +35,10 @@ export function Words({ text, className }: { text: string; className?: string })
   );
 }
 
-export function CountUp({ to, suffix = "", decimals = 0 }: { to: number; suffix?: string; decimals?: number }) {
+export function CountUp({ to, from = 0, suffix = "", decimals = 0 }: { to: number; from?: number; suffix?: string; decimals?: number }) {
   const ref = useRef<HTMLSpanElement>(null);
   const seen = useInView(ref, { once: true });
-  const v = useMotionValue(0);
+  const v = useMotionValue(from);
   const text = useTransform(v, (n) => `${n.toFixed(decimals)}${suffix}`);
   useEffect(() => {
     if (!seen) return;

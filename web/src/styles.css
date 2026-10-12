@@ -231,3 +231,25 @@ h2.section { font-family: var(--display); font-weight: 400; font-size: 28px; let
 @keyframes light { 0% { opacity: 0; transform: scale(0.25); } 18% { opacity: 1; transform: scale(0.55); } 100% { opacity: 0; transform: scale(2.6); } }
 .ascii-scene { transition: --mx var(--move-t, 0s) var(--ease), --my var(--move-t, 0s) var(--ease), --lens var(--lens-t, 0.3s) cubic-bezier(0.65, 0, 0.35, 1); }
 .ascii-scene .tap { box-shadow: 0 0 0 1.5px rgba(17, 17, 17, 0.12), 0 0 40px 8px rgba(255, 255, 255, 0.8); animation-duration: 1.8s; }
+
+.ledger-head, .ledger { max-width: 960px; margin: 0 auto; }
+.land-section .ledger-head h2.section { text-align: left; font-size: clamp(32px, 4.4vw, 48px); line-height: 1.06; letter-spacing: -0.02em; max-width: 15ch; margin: 0 0 44px; }
+.ledger { border-bottom: 1px solid var(--line-strong); }
+.ledger-row { display: grid; grid-template-columns: 48px minmax(0, 1fr) 280px; gap: 40px; align-items: start; padding: 40px 0 36px; border-top: 1px solid var(--line-strong); }
+.ledger-n { font-family: var(--mono); font-size: 12px; color: var(--muted); padding-top: 12px; }
+.ledger-value { display: flex; align-items: baseline; gap: 14px; font-family: var(--display); font-weight: 400; font-size: clamp(60px, 8.4vw, 108px); line-height: 0.92; letter-spacing: -0.04em; font-variant-numeric: tabular-nums; }
+.ledger-value small { font-size: 0.34em; letter-spacing: 0; color: var(--muted); margin-left: 10px; }
+.ledger-value s { font-size: 0.3em; letter-spacing: 0; color: var(--muted); text-decoration-color: var(--red); text-decoration-thickness: 2px; }
+.ledger-copy { padding-top: 10px; }
+.ledger-copy p { margin: 0 0 14px; font-size: 16px; line-height: 1.5; }
+.ledger-copy .meta { font-family: var(--mono); font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.track { position: relative; height: 6px; margin: 30px 0 24px; border-radius: 99px; background: var(--line); }
+.track i { position: absolute; left: 0; top: -4px; bottom: -4px; border: 1.5px dashed #c6c6c6; border-radius: 99px; }
+.track b { position: absolute; top: 0; bottom: 0; border-radius: 99px; background: var(--red); }
+.ticks { position: absolute; left: 0; right: 0; top: 14px; display: flex; justify-content: space-between; font-family: var(--mono); font-size: 10.5px; color: var(--muted); }
+.ticks em { font-style: normal; }
+@media (max-width: 760px) {
+  .ledger-row { grid-template-columns: 1fr; gap: 10px; padding: 28px 0; }
+  .ledger-n { padding: 0; }
+  .ledger-copy { padding: 0; }
+}
