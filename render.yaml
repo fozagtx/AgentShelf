@@ -19,8 +19,6 @@ services:
         sync: false
       - key: ASTRO_GATEWAY_API_KEY
         sync: false
-      - key: JINA_API_KEY
-        sync: false
       - key: ELASTIC_API_KEY
         sync: false
       - key: RENDER_API_KEY
@@ -46,8 +44,6 @@ services:
       - key: KERNEL_API_KEY
         sync: false
       - key: ASTRO_GATEWAY_API_KEY
-        sync: false
-      - key: JINA_API_KEY
         sync: false
       - key: ELASTIC_API_KEY
         sync: false

@@ -11,7 +11,6 @@ export const RUNS_INDEX = "agentshelf-runs";
 export const EVENTS_INDEX = "agentshelf-events";
 export const KEYS_INDEX = "agentshelf-keys";
 export const ANALYTICS_INDEX = RUNS_INDEX;
-export const JINA_INFERENCE_ID = "agentshelf-jina";
 
 export function createElasticClient() {
   const endpoint = getElasticUrl() || ELASTIC_ENDPOINT_TO_CONFIGURE;
@@ -115,37 +114,6 @@ export async function ensureIndices(client: Client) {
       }
     }
   }
-  if (!process.env.JINA_API_KEY) return;
-  try {
-    await client.transport.request({
-      method: "GET",
-      path: `/_inference/text_embedding/${JINA_INFERENCE_ID}`,
-    });
-  } catch (error) {
-    if ((error as { meta?: { statusCode?: number } }).meta?.statusCode !== 404) {
-      throw error;
-    }
-    await client.transport.request({
-      method: "PUT",
-      path: `/_inference/text_embedding/${JINA_INFERENCE_ID}`,
-      body: {
-        service: "jinaai",
-        service_settings: {
-          api_key: process.env.JINA_API_KEY,
-          model_id: "jina-embeddings-v3",
-        },
-      },
-    });
-  }
-  await client.indices.putMapping({
-    index: RUNS_INDEX,
-    properties: {
-      reasoning: {
-        type: "semantic_text",
-        inference_id: JINA_INFERENCE_ID,
-      },
-    },
-  });
 }
 
 export async function getDocument<T>(

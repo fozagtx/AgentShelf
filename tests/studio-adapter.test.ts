@@ -16,12 +16,12 @@ describe("AG Studio gateway adapter translations", () => {
       instructions: "Use the experiment results.",
       model: { id: "gpt-5-6-terra" },
       tools: [{
-        name: "searchAgentReasoning",
-        description: "Search shopper reasoning.",
+        name: "readFunnel",
+        description: "Read checkout funnel data.",
         parameters: {
           type: "object",
-          properties: { query: { type: "string" } },
-          required: ["query"],
+          properties: { stage: { type: "string" } },
+          required: ["stage"],
           additionalProperties: false,
         },
       }],
@@ -38,12 +38,12 @@ describe("AG Studio gateway adapter translations", () => {
       tools: [{
         type: "function",
         function: {
-          name: "searchAgentReasoning",
-          description: "Search shopper reasoning.",
+          name: "readFunnel",
+          description: "Read checkout funnel data.",
           parameters: {
             type: "object",
-            properties: { query: { type: "string" } },
-            required: ["query"],
+            properties: { stage: { type: "string" } },
+            required: ["stage"],
             additionalProperties: false,
           },
         },
@@ -63,13 +63,13 @@ describe("AG Studio gateway adapter translations", () => {
         index: 0,
         message: {
           role: "assistant",
-          content: "I will search the reasoning.",
+          content: "I will inspect the checkout funnel.",
           tool_calls: [{
             id: "call-1",
             type: "function",
             function: {
-              name: "searchAgentReasoning",
-              arguments: "{\"query\":\"price\"}",
+              name: "readFunnel",
+              arguments: "{\"stage\":\"captured\"}",
             },
           }],
         },
@@ -83,15 +83,15 @@ describe("AG Studio gateway adapter translations", () => {
         type: "message",
         role: "assistant",
         status: "completed",
-        content: [{ type: "text", text: "I will search the reasoning.", annotations: [] }],
+        content: [{ type: "text", text: "I will inspect the checkout funnel.", annotations: [] }],
       },
       {
         id: expect.any(String),
         kind: "output",
         type: "function_call",
         callId: "call-1",
-        name: "searchAgentReasoning",
-        arguments: "{\"query\":\"price\"}",
+        name: "readFunnel",
+        arguments: "{\"stage\":\"captured\"}",
         status: "completed",
       },
     ]);

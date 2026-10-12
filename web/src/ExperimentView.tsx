@@ -3,7 +3,7 @@ import { AllCommunityModule, themeQuartz, type ColDef } from "ag-grid-community"
 import { AgGridProvider, AgGridReact } from "ag-grid-react";
 import { AgStudio, AgStudioProvider, createWidgets } from "ag-studio-react";
 import { directLlmRunner, createAiHarness, studioTheme, type AgReportState } from "ag-studio";
-import { api, type Analytics, type Experiment, type RunRow, type WhyHit } from "./api";
+import { api, type Analytics, type Experiment, type RunRow } from "./api";
 import { LiveShoppers } from "./LiveShoppers";
 import { AsciiImage } from "./Ascii";
 import { Item, hoverCard } from "./motion";
@@ -83,10 +83,6 @@ export function ExperimentView({ id }: { id: string }) {
   const [stats, setStats] = useState<Analytics | null>(null);
   const [runs, setRuns] = useState<RunRow[]>([]);
   const [error, setError] = useState("");
-  const [whyQuery, setWhyQuery] = useState("");
-  const [whyHits, setWhyHits] = useState<WhyHit[] | null>(null);
-  const [whyError, setWhyError] = useState("");
-  const [whyBusy, setWhyBusy] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -122,20 +118,6 @@ export function ExperimentView({ id }: { id: string }) {
   const widgets = useMemo(() => (base: any) => createAgentShelfWidgets(base), []);
   const ai = useMemo(() => ({ api: studioApi }: any) => {
     const adapter = createGatewayAdapter();
-    const searchReasoning = studioApi.defineAiTool({
-      name: "searchAgentReasoning",
-      description: "Search this experiment's shopper reasoning for evidence about why products were picked or skipped.",
-      params: (s: any) => s.object({ query: s.string() }),
-      execute: async ({ query }: { query: string }, context: any) => {
-        const response = await fetch(
-          `/api/experiments/${encodeURIComponent(id)}/why?q=${encodeURIComponent(query)}`,
-          { signal: context.signal },
-        );
-        const body = await response.json().catch(() => ({}));
-        if (!response.ok) return context.error(body?.error ?? `Reasoning search failed with status ${response.status}.`);
-        return context.success(JSON.stringify(body.hits), body.hits);
-      },
-    });
     return createAiHarness(studioApi, ({ builtIn }: any) => {
       const builtIns = Object.entries(builtIn).map(([agentId, definition]: [string, any]) => {
         if (agentId !== "lead") return directLlmRunner({ ...definition, adapter });
@@ -155,8 +137,7 @@ export function ExperimentView({ id }: { id: string }) {
         name: "AgentShelf analyst",
         description: "Explains why AI shoppers picked or skipped the merchant's product.",
         adapter,
-        instructions: () => "Explain why AI shoppers picked or skipped the merchant's product. Use searchAgentReasoning for evidence. Do not invent findings.",
-        tools: () => [searchReasoning],
+        instructions: () => "Explain why AI shoppers picked or skipped the merchant's product using only experiment results available in Studio. Do not invent findings.",
       });
       return {
         agents: [...builtIns, analyst],
@@ -164,7 +145,7 @@ export function ExperimentView({ id }: { id: string }) {
         models: AGENT_MODELS.map((model) => ({ id: model, label: model })),
       };
     });
-  }, [id]);
+  }, []);
 
   const cols = useMemo<ColDef[]>(() => [
     { field: "model", filter: true, flex: 1.2 },
@@ -184,24 +165,6 @@ export function ExperimentView({ id }: { id: string }) {
   const picks = stats.shareByModel.reduce((s, r) => s + r.merchantPicks, 0);
   const first = stats.positionBias.find((p) => p.position === 1);
   const captured = stats.funnel.filter((f) => f.stage === "captured").reduce((s, f) => s + f.count, 0);
-
-  async function searchWhy(query = whyQuery) {
-    const normalized = query.trim();
-    if (!normalized) return;
-    setWhyQuery(normalized);
-    setWhyHits(null);
-    setWhyError("");
-    setWhyBusy(true);
-    try {
-      const result = await api.why(id, normalized);
-      setWhyHits(result.hits);
-    } catch (reason) {
-      setWhyError((reason as Error).message);
-      setWhyHits([]);
-    } finally {
-      setWhyBusy(false);
-    }
-  }
 
   return (
     <div className="enter">
@@ -234,54 +197,6 @@ export function ExperimentView({ id }: { id: string }) {
           </AgStudioProvider>
         )}
       </div>
-
-      <div className="gap-xl" />
-      <h2 className="section">Why agents skipped you</h2>
-      <div style={{ height: 16 }} />
-      <section className="card" style={{ padding: 20 }}>
-        <form
-          className="row"
-          style={{ flexWrap: "wrap" }}
-          onSubmit={(event) => {
-            event.preventDefault();
-            void searchWhy();
-          }}
-        >
-          <input
-            aria-label="Search shopper reasoning"
-            value={whyQuery}
-            onChange={(event) => setWhyQuery(event.target.value)}
-            placeholder="Search shopper reasoning"
-            style={{ flex: "1 1 260px" }}
-          />
-          <button className="btn red" disabled={whyBusy || !whyQuery.trim()}>
-            {whyBusy ? "Searching" : "Search"}
-          </button>
-          {["price", "missing details", "checkout problem"].map((query) => (
-            <button key={query} type="button" className="btn ghost" disabled={whyBusy} onClick={() => void searchWhy(query)}>
-              {query}
-            </button>
-          ))}
-        </form>
-        {whyError && <div className="empty" role="status" style={{ marginTop: 16 }}>{whyError}</div>}
-        {whyHits && whyHits.length === 0 && !whyError && (
-          <div className="empty" role="status" style={{ marginTop: 16 }}>No matching shopper reasoning found.</div>
-        )}
-        {!!whyHits?.length && (
-          <div className="stack" style={{ marginTop: 16 }}>
-            {whyHits.map((hit) => (
-              <article key={hit.runId} className="card" style={{ padding: 16 }}>
-                <div className="spread">
-                  <strong>{hit.model}</strong>
-                  <span className="tag">{hit.outcome}</span>
-                </div>
-                <div className="meta" style={{ marginTop: 6 }}>{hit.variant}{hit.chosenTitle ? ` · ${hit.chosenTitle}` : ""}</div>
-                <p style={{ margin: "12px 0 0", whiteSpace: "pre-wrap" }}>{hit.reasoning}</p>
-              </article>
-            ))}
-          </div>
-        )}
-      </section>
 
       <div className="gap-xl" />
       <h2 className="section">Runs</h2>

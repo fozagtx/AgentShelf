@@ -56,16 +56,6 @@ export interface Analytics {
   };
 }
 
-export interface WhyHit {
-  runId: string;
-  model: string;
-  variant: string;
-  chosenTitle: string | null;
-  outcome: string;
-  reasoning: string;
-  score: number;
-}
-
 export type RunRow = Record<string, string | number | boolean | null>;
 
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
@@ -89,6 +79,4 @@ export const api = {
     call<{ id: string }>("/api/experiments", { method: "POST", body: JSON.stringify(b) }),
   analytics: (id: string) => call<Analytics>(`/api/experiments/${id}/analytics`),
   runs: (id: string) => call<RunRow[]>(`/api/experiments/${id}/runs`),
-  why: (id: string, query: string) =>
-    call<{ hits: WhyHit[] }>(`/api/experiments/${id}/why?q=${encodeURIComponent(query)}`),
 };

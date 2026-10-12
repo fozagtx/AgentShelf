@@ -72,33 +72,6 @@ describe("AgentShelf with local Elasticsearch", () => {
     expect(await response.json()).toHaveProperty("error");
   });
 
-  it("returns a service-unavailable response when Jina is not configured", async () => {
-    const key = process.env.JINA_API_KEY;
-    delete process.env.JINA_API_KEY;
-    try {
-      const response = await request(
-        app,
-        "GET",
-        `/api/experiments/${uniqueId()}/why?q=price`,
-      );
-      expect(response.status).toBe(503);
-      expect(await response.json()).toEqual({ error: "JINA_API_KEY is not set" });
-    } finally {
-      if (key === undefined) delete process.env.JINA_API_KEY;
-      else process.env.JINA_API_KEY = key;
-    }
-  });
-
-  it("rejects an empty semantic reasoning query", async () => {
-    const response = await request(
-      app,
-      "GET",
-      `/api/experiments/${uniqueId()}/why?q=`,
-    );
-    expect(response.status).toBe(400);
-    expect(await response.json()).toHaveProperty("error");
-  });
-
   afterAll(async () => {
     await Promise.all([
       elastic.deleteByQuery({

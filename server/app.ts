@@ -305,43 +305,6 @@ export async function createApp(options: AppOptions = {}) {
     c.json(await getExperimentAnalytics(elastic, c.req.param("id"))),
   );
 
-  app.get("/api/experiments/:id/why", async (c) => {
-    const query = c.req.query("q")?.trim();
-    if (!query) return c.json({ error: "A non-empty q query parameter is required." }, 400);
-    if (!process.env.JINA_API_KEY) {
-      return c.json({ error: "JINA_API_KEY is not set" }, 503);
-    }
-    const result = await elastic.search<Record<string, any>>({
-      index: RUNS_INDEX,
-      size: 8,
-      query: {
-        bool: {
-          filter: [{ term: { experiment_id: c.req.param("id") } }],
-          must: [{ match: { reasoning: { query } } }],
-        },
-      },
-    });
-    return c.json({
-      hits: result.hits.hits.flatMap((hit) => {
-        const run = hit._source;
-        if (!run) return [];
-        return [{
-          runId: String(run.id ?? hit._id),
-          model: String(run.model ?? ""),
-          variant: String(run.variant ?? ""),
-          chosenTitle: typeof run.chosen_title === "string" ? run.chosen_title : null,
-          outcome: run.chosen_is_merchant === true
-            ? "picked"
-            : run.chosen_is_merchant === false
-              ? "skipped"
-              : String(run.status ?? ""),
-          reasoning: String(run.reasoning ?? ""),
-          score: Number(hit._score ?? 0),
-        }];
-      }),
-    });
-  });
-
   app.get("/api/experiments/:id/runs", async (c) => {
     const result = await elastic.search<Record<string, any>>({
       index: RUNS_INDEX,

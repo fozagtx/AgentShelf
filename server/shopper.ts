@@ -531,15 +531,6 @@ export async function runShopper(client: Client, spec: RunSpec) {
       : {}),
     ...(replayUrl ? { replay_view_url: replayUrl } : {}),
     agent_final_text: redactSecrets(finalText),
-    ...(process.env.JINA_API_KEY
-      ? {
-          reasoning: [
-            finalText,
-            selection?.chosen_title,
-            failure ?? (errorEvent ? String(errorEvent.error ?? "") : ""),
-          ].filter((part): part is string => Boolean(part)).map(redactSecrets).join("\n"),
-        }
-      : {}),
     duration_ms: Date.now() - startedAt,
     completed_at: new Date().toISOString(),
   };
@@ -657,7 +648,6 @@ async function failRun(
     status: "failed",
     failure_stage: stage,
     failure_reason: reason,
-    ...(process.env.JINA_API_KEY ? { reasoning: redactSecrets(reason) } : {}),
     duration_ms: Date.now() - startedAt,
     completed_at: new Date().toISOString(),
   };
