@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 const RAMP = " .'`^\",:;Il!i~+_-?][}{1)(|/tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@";
 const NOISE = "!<>-_\\/[]{}=+*^?#";
 const COLS = 170;
+const TOUCH_MS = 5000;
 const TOUR: [number, number][] = [[0.23, 0.55], [0.42, 0.45], [0.55, 0.66], [0.79, 0.7], [0.5, 0.27]];
 
 type Cell = { ch: string; red: boolean; obj: boolean };
@@ -138,47 +139,53 @@ export function AsciiScene({ src }: { src: string }) {
     let i = 0;
     let alive = true;
     const later = (fn: () => void, ms: number) => timers.push(window.setTimeout(fn, ms));
-    const busy = () => performance.now() < userUntil.current;
     const step = () => {
       if (!alive) return;
-      if (busy()) return later(step, 800);
+      if (performance.now() < userUntil.current) return later(step, 800);
       const [fx, fy] = TOUR[i++ % TOUR.length];
-      el.classList.add("tour");
-      el.style.setProperty("--lens", "0px");
+      el.style.setProperty("--move-t", "0.9s");
+      el.style.setProperty("--mx", `${fx * el.clientWidth}px`);
+      el.style.setProperty("--my", `${fy * el.clientHeight}px`);
       later(() => {
-        if (busy()) return step();
-        el.style.setProperty("--mx", `${fx * el.clientWidth}px`);
-        el.style.setProperty("--my", `${fy * el.clientHeight}px`);
-        later(() => {
-          if (busy()) return step();
-          setTap((t) => t + 1);
-          el.style.setProperty("--lens", `${Math.max(70, el.clientWidth * 0.12)}px`);
-          later(step, 2200);
-        }, 900);
-      }, 450);
+        if (performance.now() < userUntil.current) return step();
+        touchRef.current(fx * el.clientWidth, fy * el.clientHeight);
+        later(step, TOUCH_MS + 900);
+      }, 950);
     };
     later(step, 2000);
     return () => { alive = false; timers.forEach(clearTimeout); removeEventListener("scroll", onScroll); };
   }, [grid]);
 
-  const move = (e: React.PointerEvent) => {
-    userUntil.current = performance.now() + 3500;
-    wrap.current!.classList.remove("tour");
-    const r = wrap.current!.getBoundingClientRect();
-    wrap.current!.style.setProperty("--mx", `${e.clientX - r.left}px`);
-    wrap.current!.style.setProperty("--my", `${e.clientY - r.top}px`);
-    wrap.current!.style.setProperty("--lens", "120px");
+  const closeTimer = useRef(0);
+  const touch = (x: number, y: number) => {
+    const el = wrap.current;
+    if (!el) return;
+    clearTimeout(closeTimer.current);
+    el.style.setProperty("--mx", `${x}px`);
+    el.style.setProperty("--my", `${y}px`);
+    setTap((t) => t + 1);
+    const full = Math.hypot(Math.max(x, el.clientWidth - x), Math.max(y, el.clientHeight - y)) / 0.7;
+    el.style.setProperty("--lens-t", "1.8s");
+    el.style.setProperty("--lens", `${full}px`);
+    closeTimer.current = window.setTimeout(() => {
+      el.style.setProperty("--lens-t", "1.6s");
+      el.style.setProperty("--lens", "0px");
+    }, 3400);
   };
-  const hide = useRef(0);
-  const leave = () => wrap.current?.style.setProperty("--lens", "0px");
-  const down = (e: React.PointerEvent) => { clearTimeout(hide.current); move(e); };
-  const up = (e: React.PointerEvent) => { if (e.pointerType !== "mouse") hide.current = window.setTimeout(leave, 1600); };
+  const touchRef = useRef(touch);
+  touchRef.current = touch;
+  const down = (e: React.PointerEvent) => {
+    userUntil.current = performance.now() + TOUCH_MS + 1500;
+    wrap.current!.style.setProperty("--move-t", "0s");
+    const r = wrap.current!.getBoundingClientRect();
+    touch(e.clientX - r.left, e.clientY - r.top);
+  };
 
   return (
-    <div ref={wrap} className="ascii-scene" style={{ height: box.h }} onPointerMove={move} onPointerDown={down} onPointerUp={up} onPointerCancel={leave} onPointerLeave={(e) => e.pointerType === "mouse" && leave()}>
+    <div ref={wrap} className="ascii-scene" style={{ height: box.h }} onPointerDown={down}>
       <img src={src} alt="AI shopper agents browsing a store shelf" />
       <pre ref={pre} aria-hidden style={grid && box.w ? { transform: `scale(${box.w / (COLS * 6)}, ${box.h / (grid.length * 12)})` } : undefined} />
-      <span key={tap} className="tap" aria-hidden />
+      {tap > 0 && <span key={tap} className="tap" aria-hidden />}
     </div>
   );
 }
