@@ -162,7 +162,11 @@ export async function createApp(options: AppOptions = {}) {
     const id = randomUUID();
     let competitors;
     try {
-      competitors = await searchCompetitors(input.query.trim());
+      competitors = await searchCompetitors(input.query.trim(), {
+        price: product.price,
+        channel3_id: product.channel3_id,
+        url: product.url,
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Channel3 product search failed.";
       return c.json({ message }, message.includes("Missing environment variables") ? 503 : 502);
@@ -215,6 +219,27 @@ export async function createApp(options: AppOptions = {}) {
     );
     if (!experiment) return c.json({ message: "Experiment not found." }, 404);
     return c.json(await withRunCounts(db, experiment));
+  });
+
+  app.put("/api/experiments/:id/report", async (c) => {
+    const body = await readJson(c);
+    if (
+      !body ||
+      !("state" in body) ||
+      (body.state !== null &&
+        (!body.state || typeof body.state !== "object" || Array.isArray(body.state)))
+    ) {
+      return c.json({ message: "Report state must be an object or null." }, 400);
+    }
+    const experimentId = c.req.param("id");
+    const experiment = await getDoc<Record<string, any>>(
+      db,
+      EXPERIMENTS_TABLE,
+      experimentId,
+    );
+    if (!experiment) return c.json({ message: "Experiment not found." }, 404);
+    await patchDoc(db, EXPERIMENTS_TABLE, experimentId, { report_state: body.state });
+    return c.json({ report_state: body.state });
   });
 
   app.get("/api/experiments/:id/live", async (c) => {
@@ -323,15 +348,23 @@ export async function createApp(options: AppOptions = {}) {
 }
 
 async function withRunCounts(db: Db, experiment: Record<string, any>) {
-  const [total, done] = await Promise.all([
+  const [total, done, product] = await Promise.all([
     countDocs(db, RUNS_TABLE, { where: { experiment_id: experiment.id } }),
     countDocs(db, RUNS_TABLE, {
       where: { experiment_id: experiment.id },
       anyOf: ["status", ["complete", "completed", "done", "failed"]],
     }),
+    getDoc<Record<string, any>>(db, PRODUCTS_TABLE, String(experiment.product_id ?? "")),
   ]);
   return {
     ...experiment,
+    merchant_product: product ? {
+      id: product.id,
+      title: product.title,
+      brand: product.brand ?? null,
+      price: Number(product.price ?? 0),
+      url: String(product.url ?? ""),
+    } : null,
     competitors: (experiment.competitors ?? []).map((competitor: Record<string, any>) => ({
       id: competitor.id,
       title: competitor.title,

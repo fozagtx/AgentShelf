@@ -81,6 +81,17 @@ function TakeawayWidget(props: WidgetProps) {
 
 function ModelScoreboardWidget(props: WidgetProps) {
   const { rows, value } = useRows(props, ["model", "variant", "share"]);
+  const modelField = props.dataMapping.model?.[0];
+  const modelFieldId = modelField && "id" in modelField ? modelField.id : undefined;
+  const [, setSelectionTick] = useState(0);
+  const crossFilter = props.widgetApi.getCrossFilterSelections()?.find((selection) =>
+    selection.type === "value" &&
+    "id" in selection.field &&
+    selection.field.id === modelFieldId,
+  );
+  const selectedModel = crossFilter?.type === "value"
+    ? String(crossFilter.values[0] ?? "")
+    : "";
   const models = new Map<string, { original?: number; fixed?: number }>();
   for (const row of rows) {
     const model = String(value(row, "model") ?? "");
@@ -103,7 +114,36 @@ function ModelScoreboardWidget(props: WidgetProps) {
       {[...models.entries()].map(([model, shares]) => {
         const delta = (shares.fixed ?? 0) - (shares.original ?? 0);
         return (
-          <div key={model} style={{ display: "grid", gridTemplateColumns: "minmax(100px,1fr) 2fr 2fr 64px", gap: 12, alignItems: "center", padding: "10px 0", borderBottom: `1px solid ${colors.line}`, fontSize: 12 }}>
+          <button
+            key={model}
+            type="button"
+            aria-pressed={selectedModel === model}
+            onClick={() => {
+              if (!modelField) return;
+              props.widgetApi.toggleCrossFilter({
+                type: "value",
+                field: modelField,
+                value: model,
+                group: 0,
+              });
+              setSelectionTick((tick) => tick + 1);
+            }}
+            style={{
+              display: "grid",
+              gridTemplateColumns: "minmax(100px,1fr) 2fr 2fr 64px",
+              gap: 12,
+              alignItems: "center",
+              padding: "10px 8px",
+              border: 0,
+              borderBottom: `1px solid ${colors.line}`,
+              background: selectedModel === model ? colors.pale : colors.white,
+              color: colors.ink,
+              font: "inherit",
+              textAlign: "left",
+              cursor: "pointer",
+              width: "100%",
+            }}
+          >
             <strong>{model}</strong>
             {(["original", "fixed"] as const).map((variant) => {
               const share = shares[variant];
@@ -118,7 +158,7 @@ function ModelScoreboardWidget(props: WidgetProps) {
             <strong style={{ textAlign: "right", color: delta > 0 ? colors.red : colors.muted }}>
               {delta > 0 ? "+" : ""}{Math.round(delta * 100)}%
             </strong>
-          </div>
+          </button>
         );
       })}
     </div>
@@ -169,23 +209,79 @@ function CheckoutFunnelWidget(props: WidgetProps) {
   );
 }
 
-const categoryField = { type: "field", supportedRoles: ["category"], requires: { cardinality: "one" } };
-const numericField = { type: "field", supportedRoles: ["numeric"], requires: { cardinality: "one" } };
+function categoryField(aiDescription: string, required = false) {
+  return {
+    type: "field",
+    supportedRoles: ["category"],
+    requires: { cardinality: "one" },
+    aiDescription,
+    ...(required ? { required: true } : {}),
+  };
+}
+
+function numericField(aiDescription: string, required = false) {
+  return {
+    type: "field",
+    supportedRoles: ["numeric"],
+    requires: { cardinality: "one" },
+    aiDescription,
+    ...(required ? { required: true } : {}),
+  };
+}
+
+function formatShape() {
+  const schema = {
+    type: "object",
+    properties: {
+      caption: {
+        type: "object",
+        properties: {
+          enabled: { type: "boolean" },
+          text: { type: "string" },
+        },
+        additionalProperties: false,
+      },
+    },
+    additionalProperties: true,
+  };
+  const value = (input: unknown) =>
+    input && typeof input === "object" && !Array.isArray(input) ? input : {};
+  return {
+    parse: (input: unknown) => ({ success: true, value: value(input) }),
+    toJSONSchema: () => schema,
+    "~standard": {
+      version: 1,
+      vendor: "ag",
+      validate: (input: unknown) => ({ success: true, value: value(input) }),
+      types: { input: {}, output: {} },
+      jsonSchema: { input: () => schema, output: () => schema },
+    },
+  } as any;
+}
+
+const widgetFormatShape = formatShape();
 
 const widgetDefinitions = [
   {
     id: "takeaway",
     label: "Takeaway",
     dataMapping: {
-      headline: { ...categoryField, required: true },
-      model: categoryField,
-      originalShare: numericField,
-      fixedShare: numericField,
-      delta: numericField,
-      topBreakStage: categoryField,
-      topBreakCount: numericField,
+      headline: categoryField("Takeaway headline text.", true),
+      model: categoryField("Model with the largest fixed-copy improvement."),
+      originalShare: numericField("Selection share before the copy change."),
+      fixedShare: numericField("Selection share after the copy change."),
+      delta: numericField("Selection-share change from original to fixed copy."),
+      topBreakStage: categoryField("Checkout stage with the most shopper failures."),
+      topBreakCount: numericField("Number of failures at the top break stage."),
     },
     comp: TakeawayWidget,
+    formatShape: () => widgetFormatShape,
+    ai: {
+      label: "Merchant takeaway",
+      description: "Highlights the experiment's main takeaway and strongest copy change.",
+      usage: "Use on the Overview page when a concise experiment summary is useful.",
+      configuration: "Map the takeaway headline and optional model, share, delta, and break-stage fields.",
+    },
     form: ({ createDefaults }: any) => createDefaults({
       dataMappingItems: Object.keys({
         headline: 1,
@@ -204,11 +300,18 @@ const widgetDefinitions = [
     id: "modelScoreboard",
     label: "Model scoreboard",
     dataMapping: {
-      model: { ...categoryField, required: true },
-      variant: { ...categoryField, required: true },
-      share: { ...numericField, required: true },
+      model: categoryField("AI shopper model name.", true),
+      variant: categoryField("Product-copy variant tested.", true),
+      share: numericField("Average merchant-selection value for this model and variant.", true),
     },
     comp: ModelScoreboardWidget,
+    formatShape: () => widgetFormatShape,
+    ai: {
+      label: "Model scoreboard",
+      description: "Compares merchant-selection share across models and product-copy variants.",
+      usage: "Use to compare original and fixed product-copy performance by model.",
+      configuration: "Map model, variant, and average merchant-selection share.",
+    },
     form: ({ createDefaults }: any) => createDefaults({
       dataMappingItems: ["model", "variant", "share"].map((key) => ({ key, label: key })),
     }),
@@ -219,10 +322,17 @@ const widgetDefinitions = [
     id: "checkoutFunnel",
     label: "Checkout funnel",
     dataMapping: {
-      stage: { ...categoryField, required: true },
-      count: { ...numericField, required: true },
+      stage: categoryField("Experiment checkout funnel stage.", true),
+      count: numericField("Runs reaching this funnel stage.", true),
     },
     comp: CheckoutFunnelWidget,
+    formatShape: () => widgetFormatShape,
+    ai: {
+      label: "Checkout funnel",
+      description: "Shows shopper progression through product selection and checkout.",
+      usage: "Use when the report should show stage counts and the largest drop-off.",
+      configuration: "Map checkout stage and its run count.",
+    },
     form: ({ createDefaults }: any) => createDefaults({
       dataMappingItems: ["stage", "count"].map((key) => ({ key, label: key })),
     }),
@@ -242,9 +352,9 @@ const defaultMappings = {
     topBreakCount: [{ id: "takeaway.topBreakCount" }],
   },
   modelScoreboard: {
-    model: [{ id: "share.model" }],
-    variant: [{ id: "share.variant" }],
-    share: [{ id: "share.share", aggregation: "avg" }],
+    model: [{ id: "runs.model" }],
+    variant: [{ id: "runs.variant" }],
+    share: [{ id: "runs.picked_ours", aggregation: "avg" }],
   },
   checkoutFunnel: {
     stage: [{ id: "funnel.stage" }],

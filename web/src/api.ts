@@ -35,11 +35,19 @@ export interface Competitor {
 export interface Experiment {
   id: string;
   product_id: string;
+  merchant_product?: {
+    id: string;
+    title: string;
+    brand?: string | null;
+    price: number;
+    url: string;
+  } | null;
   query: string;
   reps: number;
   status: string;
   created_at: string;
   competitors: Competitor[];
+  report_state?: unknown;
   run_counts?: { total: number; done: number };
 }
 
@@ -75,6 +83,11 @@ export const api = {
   searchChannel3: (q: string) => call<Channel3Hit[]>(`/api/products/search?q=${encodeURIComponent(q)}`),
   experiments: () => call<Experiment[]>("/api/experiments"),
   experiment: (id: string) => call<Experiment>(`/api/experiments/${id}`),
+  saveReport: (id: string, state: unknown | null) =>
+    call<{ report_state: unknown | null }>(`/api/experiments/${id}/report`, {
+      method: "PUT",
+      body: JSON.stringify({ state }),
+    }),
   createExperiment: (b: { productId: string; query: string; reps: number }) =>
     call<{ id: string }>("/api/experiments", { method: "POST", body: JSON.stringify(b) }),
   analytics: (id: string) => call<Analytics>(`/api/experiments/${id}/analytics`),

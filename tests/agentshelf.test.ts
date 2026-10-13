@@ -73,6 +73,62 @@ describe("AgentShelf with local PostgreSQL", () => {
     expect(await response.json()).toHaveProperty("error");
   });
 
+  it("saves and clears report layout state", async () => {
+    const experimentId = uniqueId();
+    await putDoc(db, EXPERIMENTS_TABLE, experimentId, {
+      id: experimentId,
+      product_id: product.id,
+      query: "insulated water bottle",
+      competitors: [],
+      status: "complete",
+      created_at: new Date().toISOString(),
+    });
+
+    const state = {
+      pages: [{ id: "Overview", widgets: {}, widgetLayout: {} }],
+      selectedPageId: "Overview",
+    };
+    const saved = await request(
+      app,
+      "PUT",
+      `/api/experiments/${experimentId}/report`,
+      undefined,
+      { state },
+    );
+    expect(saved.status).toBe(200);
+    expect(await saved.json()).toEqual({ report_state: state });
+    expect((await getDoc<Record<string, unknown>>(db, EXPERIMENTS_TABLE, experimentId))?.report_state)
+      .toEqual(state);
+
+    const invalid = await request(
+      app,
+      "PUT",
+      `/api/experiments/${experimentId}/report`,
+      undefined,
+      { state: [] },
+    );
+    expect(invalid.status).toBe(400);
+
+    const missing = await request(
+      app,
+      "PUT",
+      `/api/experiments/${uniqueId()}/report`,
+      undefined,
+      { state },
+    );
+    expect(missing.status).toBe(404);
+
+    const cleared = await request(
+      app,
+      "PUT",
+      `/api/experiments/${experimentId}/report`,
+      undefined,
+      { state: null },
+    );
+    expect(cleared.status).toBe(200);
+    expect(await cleared.json()).toEqual({ report_state: null });
+  });
+
   afterAll(async () => {
     await Promise.all([
       db.query("delete from products where id like $1", [`${testPrefix}%`]),
@@ -645,7 +701,10 @@ describe("AgentShelf with local PostgreSQL", () => {
     "searches live Channel3 catalog results",
     async () => {
       const { searchCompetitors } = await import("../server/channel3.js");
-      const results = await searchCompetitors("insulated water bottle");
+      const results = await searchCompetitors("insulated water bottle", {
+        price: 24.5,
+        url: String(product.url),
+      });
       expect(results.length).toBeGreaterThan(0);
       expect(results.every((item) =>
         item.offers.some((offer: { availability: string; price: { currency: string } }) =>

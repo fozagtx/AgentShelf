@@ -80,40 +80,64 @@ export function mapChannel3Product(
   };
 }
 
-export async function searchCompetitors(query: string): Promise<Competitor[]> {
+export async function searchCompetitors(
+  query: string,
+  merchant: { price: number; channel3_id?: string; url?: string },
+): Promise<Competitor[]> {
   const missing = missingChannel3Credentials();
   if (missing.length) {
     throw new Error(`Channel3 search is unavailable. Missing environment variables: ${missing.join(", ")}.`);
   }
   const client = createChannel3Client();
-  const response = await client.products.search({
-    query,
-    filters: { availability: ["InStock"] },
-  });
-  return response.data.flatMap((product) => {
-    const offers = (product.offers ?? []).filter((offer) =>
-      offer.availability === "InStock" &&
-      offer.price.currency === "USD" &&
-      Number.isFinite(offer.price.price) &&
-      Boolean(offer.url && offer.domain),
-    );
-    return offers.length
-      ? [{
-          id: product.id,
-          title: product.title,
-          brand: product.brands?.[0]?.name ?? null,
-          description: product.description,
-          images: product.images?.map((image) => ({
-            ...image,
-            url: image.cleaned_url ?? image.url,
-          })),
-          offers: offers.map((offer) => ({
-            url: offer.url,
-            domain: offer.domain,
-            price: { amount: offer.price.price, currency: offer.price.currency },
-            availability: offer.availability,
-          })),
-        }]
-      : [];
-  }).slice(0, 5);
+  const search = async (withPrice: boolean) => {
+    const response = await client.products.search({
+      query,
+      filters: {
+        availability: ["InStock"],
+        ...(withPrice
+          ? {
+              price: {
+                min_price: merchant.price * 0.5,
+                max_price: merchant.price * 1.5,
+              },
+            }
+          : {}),
+      },
+    });
+    return response.data.flatMap((product) => {
+      if (
+        (merchant.channel3_id && product.id === merchant.channel3_id) ||
+        (merchant.url && (product.offers ?? []).some((offer) => offer.url === merchant.url))
+      ) {
+        return [];
+      }
+      const offers = (product.offers ?? []).filter((offer) =>
+        offer.availability === "InStock" &&
+        offer.price.currency === "USD" &&
+        Number.isFinite(offer.price.price) &&
+        Boolean(offer.url && offer.domain),
+      );
+      return offers.length
+        ? [{
+            id: product.id,
+            title: product.title,
+            brand: product.brands?.[0]?.name ?? null,
+            description: product.description,
+            images: product.images?.map((image) => ({
+              ...image,
+              url: image.cleaned_url ?? image.url,
+            })),
+            offers: offers.map((offer) => ({
+              url: offer.url,
+              domain: offer.domain,
+              price: { amount: offer.price.price, currency: offer.price.currency },
+              availability: offer.availability,
+            })),
+          }]
+        : [];
+    });
+  };
+  let competitors = await search(true);
+  if (competitors.length < 3) competitors = await search(false);
+  return competitors.slice(0, 5);
 }

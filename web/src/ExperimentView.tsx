@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AllCommunityModule, themeQuartz, type ColDef } from "ag-grid-community";
 import { AgGridProvider, AgGridReact } from "ag-grid-react";
 import { AgStudio, AgStudioProvider, createWidgets } from "ag-studio-react";
@@ -8,7 +8,9 @@ import { LiveShoppers } from "./LiveShoppers";
 import { AsciiImage } from "./Ascii";
 import { Item, hoverCard } from "./motion";
 import { createGatewayAdapter } from "./studio/adapter";
-import { agentShelfWidgetState, createAgentShelfWidgets } from "./studio/widgets";
+import { buildStudioData } from "./studio/data";
+import { createDefaultReportState } from "./studio/report";
+import { createAgentShelfWidgets } from "./studio/widgets";
 
 const LICENSE = import.meta.env.VITE_AG_STUDIO_LICENSE_KEY ?? "";
 const AGENT_MODELS = ["claude-sonnet-4-6", "gpt-5-6-terra", "nova-pro", "mistral-large-3"];
@@ -32,57 +34,20 @@ const reportTheme = studioTheme.withParams({
 
 const pct = (n: number) => `${Math.round(n * 100)}%`;
 
-function report(): AgReportState {
-  const customWidgets = agentShelfWidgetState();
-  const chart = (id: string, text: string, category: string, value: string, legend?: string) => ({
-    type: "column-chart-grouped" as const,
-    dataMapping: {
-      categoryKey: [{ id: category }],
-      valueKey: [{ id: value, aggregation: "avg" as const }],
-      ...(legend ? { legendKey: [{ id: legend }] } : {}),
-    },
-    format: { title: { enabled: true, text } },
-  });
-  return {
-    pages: [
-      {
-        id: "shelf",
-        widgets: {
-          takeaway: {
-            ...customWidgets.takeaway,
-            format: { title: { enabled: true, text: "Merchant takeaway" } },
-          },
-          modelScoreboard: {
-            ...customWidgets.modelScoreboard,
-            format: { title: { enabled: true, text: "Model scoreboard" } },
-          },
-          checkoutFunnel: {
-            ...customWidgets.checkoutFunnel,
-            format: { title: { enabled: true, text: "Checkout funnel" } },
-          },
-          share: chart("share", "Selection share by model", "share.model", "share.share", "share.variant"),
-          position: chart("position", "Picks by shelf position", "position.position", "position.share"),
-          funnel: { ...chart("funnel", "Checkout funnel", "funnel.stage", "funnel.count", "funnel.model"), dataMapping: { categoryKey: [{ id: "funnel.stage" }], valueKey: [{ id: "funnel.count", aggregation: "sum" as const }], legendKey: [{ id: "funnel.model" }] } },
-        },
-        widgetLayout: {
-          takeaway: { xTrack: 0, yTrack: 0, xSpan: 24, ySpan: 12 },
-          modelScoreboard: { xTrack: 0, yTrack: 12, xSpan: 14, ySpan: 26 },
-          checkoutFunnel: { xTrack: 14, yTrack: 12, xSpan: 10, ySpan: 26 },
-          share: { xTrack: 0, yTrack: 38, xSpan: 14, ySpan: 26 },
-          position: { xTrack: 14, yTrack: 38, xSpan: 10, ySpan: 26 },
-          funnel: { xTrack: 0, yTrack: 64, xSpan: 24, ySpan: 26 },
-        },
-      },
-    ],
-    selectedPageId: "shelf",
-  } as AgReportState;
-}
-
 export function ExperimentView({ id }: { id: string }) {
   const [exp, setExp] = useState<Experiment | null>(null);
   const [stats, setStats] = useState<Analytics | null>(null);
   const [runs, setRuns] = useState<RunRow[]>([]);
   const [error, setError] = useState("");
+  const [runSearch, setRunSearch] = useState("");
+  const [reportMode, setReportMode] = useState<"view" | "edit">("view");
+  const [reportBusy, setReportBusy] = useState(false);
+  const [reportError, setReportError] = useState("");
+  const runsRef = useRef(runs);
+  runsRef.current = runs;
+  const shelfRowsRef = useRef<Record<string, string | number | boolean | null>[]>([]);
+  const studioRef = useRef<AgStudio>(null);
+  const gridRef = useRef<AgGridReact<RunRow>>(null);
 
   useEffect(() => {
     let alive = true;
@@ -95,26 +60,24 @@ export function ExperimentView({ id }: { id: string }) {
     return () => { alive = false; clearInterval(t); };
   }, [id, exp?.status]);
 
-  const data = useMemo(() => stats && ({
-    sources: [
-      { id: "share", data: stats.shareByModel },
-      { id: "position", data: stats.positionBias },
-      { id: "funnel", data: stats.funnel },
-      {
-        id: "takeaway",
-        data: [{
-          headline: stats.takeaway.headline,
-          model: stats.takeaway.bestFix?.model ?? null,
-          originalShare: stats.takeaway.bestFix?.originalShare ?? null,
-          fixedShare: stats.takeaway.bestFix?.fixedShare ?? null,
-          delta: stats.takeaway.bestFix?.delta ?? null,
-          topBreakStage: stats.takeaway.topBreak?.stage ?? null,
-          topBreakCount: stats.takeaway.topBreak?.count ?? null,
-        }],
-      },
-    ],
-  }), [stats]);
-  const initialState = useMemo(report, []);
+  const data = useMemo(
+    () => exp && stats ? buildStudioData(exp, runs, stats) : null,
+    [exp, runs, stats],
+  );
+  const shelfSource = data?.sources.find((source) => source.id === "shelf");
+  if (shelfSource && "data" in shelfSource) {
+    shelfRowsRef.current = shelfSource.data as Record<string, string | number | boolean | null>[];
+  }
+  const defaultState = useMemo(createDefaultReportState, []);
+  const initialState = useMemo(() => {
+    const saved = exp?.report_state;
+    return saved && typeof saved === "object" && !Array.isArray(saved)
+      ? saved as AgReportState
+      : defaultState;
+  }, [exp?.id, defaultState]);
+  const hasSavedReport = Boolean(
+    exp?.report_state && typeof exp.report_state === "object" && !Array.isArray(exp.report_state),
+  );
   const widgets = useMemo(() => (base: any) => createAgentShelfWidgets(base), []);
   const ai = useMemo(() => ({ api: studioApi }: any) => {
     const adapter = createGatewayAdapter();
@@ -137,7 +100,52 @@ export function ExperimentView({ id }: { id: string }) {
         name: "AgentShelf analyst",
         description: "Explains why AI shoppers picked or skipped the merchant's product.",
         adapter,
-        instructions: () => "Explain why AI shoppers picked or skipped the merchant's product using only experiment results available in Studio. Do not invent findings.",
+        instructions: () => "Explain why AI shoppers picked or skipped the merchant's product using only viewSchema, executeQuery, list_checkout_failures, and describe_shelf. Cite numbers from tool results. Never invent findings.",
+        tools: (context: any) => [
+          context.tools.studio.viewSchema(),
+          context.tools.studio.executeQuery(),
+          studioApi.defineAiTool({
+            name: "list_checkout_failures",
+            description: "List checkout failures from the current experiment, optionally filtered by model or variant.",
+            params: (s: any) => s.object({
+              model: s.string({ description: "Filter to one model." }).optional(),
+              variant: s.string({ description: "Filter to one variant." }).optional(),
+            }),
+            execute: async ({ model, variant }: { model?: string; variant?: string }, ctx: any) => {
+              const failures = runsRef.current
+                .filter((run) =>
+                  (!model || run.model === model) &&
+                  (!variant || run.variant === variant) &&
+                  Boolean(run.failure_stage || run.failure_reason),
+                )
+                .map((run) => ({
+                  broke_at: typeof run.failure_stage === "string" ? run.failure_stage : null,
+                  failure_reason: typeof run.failure_reason === "string" ? run.failure_reason : null,
+                  model: String(run.model ?? ""),
+                  variant: String(run.variant ?? ""),
+                  replay_url: typeof run.replay_view_url === "string" ? run.replay_view_url : null,
+                }));
+              return ctx.success(JSON.stringify(failures), { failures });
+            },
+          }),
+          studioApi.defineAiTool({
+            name: "describe_shelf",
+            description: "Describe shelf offers and their picks in the current experiment.",
+            params: (s: any) => s.object({}),
+            execute: async (_args: Record<string, never>, ctx: any) => {
+              const offers = shelfRowsRef.current.map((row) => ({
+                title: row.title,
+                brand: row.brand,
+                price: row.price,
+                domain: row.domain,
+                is_ours: row.is_ours,
+                picks: row.picks,
+                share: row.share,
+              }));
+              return ctx.success(JSON.stringify(offers), { offers });
+            },
+          }),
+        ],
       });
       return {
         agents: [...builtIns, analyst],
@@ -148,8 +156,21 @@ export function ExperimentView({ id }: { id: string }) {
   }, []);
 
   const cols = useMemo<ColDef[]>(() => [
-    { field: "model", filter: true, flex: 1.2 },
+    { field: "model", filter: true, flex: 1.2, pinned: "left" },
     { field: "variant", filter: true, width: 110 },
+    {
+      field: "status",
+      width: 90,
+      cellRenderer: (p: { value?: string }) => {
+        const status = String(p.value ?? "");
+        const color = status === "failed"
+          ? "#E1261C"
+          : ["done", "complete", "completed"].includes(status)
+            ? "#141414"
+            : "#A3A3A3";
+        return <span title={status} aria-label={status} style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: color }} />;
+      },
+    },
     { field: "chosen_title", headerName: "Picked", flex: 2 },
     { field: "chosen_position", headerName: "Position", width: 110 },
     { field: "chosen_is_merchant", headerName: "Ours", width: 90, cellRenderer: (p: { value: boolean }) => (p.value ? "Yes" : "No") },
@@ -157,6 +178,37 @@ export function ExperimentView({ id }: { id: string }) {
     { field: "failure_stage", headerName: "Broke at", flex: 1, cellStyle: { color: "#B4170F" } },
     { field: "replay_view_url", headerName: "Replay", width: 110, cellRenderer: (p: { value?: string }) => (p.value ? <a href={p.value} target="_blank" rel="noreferrer">Watch</a> : "") },
   ], []);
+
+  const saveReport = async () => {
+    const state = studioRef.current?.api.getState();
+    if (!state) return;
+    setReportBusy(true);
+    setReportError("");
+    try {
+      await api.saveReport(id, state);
+      setExp((current) => current ? { ...current, report_state: state } : current);
+      setReportMode("view");
+    } catch (saveError) {
+      setReportError(saveError instanceof Error ? saveError.message : "Unable to save report.");
+    } finally {
+      setReportBusy(false);
+    }
+  };
+
+  const resetReport = async () => {
+    setReportBusy(true);
+    setReportError("");
+    try {
+      await api.saveReport(id, null);
+      studioRef.current?.api.setState(defaultState);
+      setExp((current) => current ? { ...current, report_state: null } : current);
+      setReportMode("view");
+    } catch (saveError) {
+      setReportError(saveError instanceof Error ? saveError.message : "Unable to reset report.");
+    } finally {
+      setReportBusy(false);
+    }
+  };
 
   if (error) return <div className="notice">{error}</div>;
   if (!exp || !stats) return <div className="empty">Loading</div>;
@@ -190,10 +242,31 @@ export function ExperimentView({ id }: { id: string }) {
       <LiveShoppers id={id} />
 
       <div className="gap-xl" />
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 10, marginBottom: 12 }}>
+        {reportError && <span role="alert" style={{ color: "#B4170F", fontSize: 13 }}>{reportError}</span>}
+        {hasSavedReport && (
+          <button
+            type="button"
+            disabled={reportBusy}
+            onClick={() => void resetReport()}
+            style={{ border: "1px solid #ECECEC", background: "#FFFFFF", color: "#141414", borderRadius: 999, padding: "8px 14px", font: "inherit", cursor: "pointer" }}
+          >
+            Reset layout
+          </button>
+        )}
+        <button
+          type="button"
+          disabled={reportBusy}
+          onClick={() => reportMode === "edit" ? void saveReport() : setReportMode("edit")}
+          style={{ border: "1px solid #141414", background: "#141414", color: "#FFFFFF", borderRadius: 999, padding: "8px 14px", font: "inherit", cursor: "pointer" }}
+        >
+          {reportMode === "edit" ? "Done" : "Edit report"}
+        </button>
+      </div>
       <div className="card studio">
         {data && (
           <AgStudioProvider licenseKey={LICENSE}>
-            <AgStudio data={data} initialState={initialState} widgets={widgets} ai={ai} mode="view" theme={reportTheme} style={{ height: "100%", width: "100%" }} />
+            <AgStudio ref={studioRef} data={data} initialState={initialState} widgets={widgets} ai={ai} mode={reportMode} theme={reportTheme} style={{ height: "100%", width: "100%" }} />
           </AgStudioProvider>
         )}
       </div>
@@ -201,9 +274,32 @@ export function ExperimentView({ id }: { id: string }) {
       <div className="gap-xl" />
       <h2 className="section">Runs</h2>
       <div style={{ height: 16 }} />
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginBottom: 12 }}>
+        <input
+          aria-label="Search runs"
+          value={runSearch}
+          onChange={(event) => setRunSearch(event.target.value)}
+          placeholder="Search runs"
+          style={{ width: "min(320px, 100%)", border: "1px solid #ECECEC", borderRadius: 999, padding: "9px 14px", font: "inherit" }}
+        />
+        <button
+          type="button"
+          onClick={() => gridRef.current?.api.exportDataAsCsv()}
+          style={{ border: "1px solid #ECECEC", background: "#FFFFFF", color: "#141414", borderRadius: 999, padding: "8px 14px", font: "inherit", cursor: "pointer" }}
+        >
+          Export CSV
+        </button>
+      </div>
       <div className="gridbox">
         <AgGridProvider modules={[AllCommunityModule]}>
-          <AgGridReact rowData={runs} columnDefs={cols} theme={gridTheme} />
+          <AgGridReact
+            ref={gridRef}
+            rowData={runs}
+            columnDefs={cols}
+            getRowId={(params) => String(params.data.id ?? params.data.run_id ?? "")}
+            quickFilterText={runSearch}
+            theme={gridTheme}
+          />
         </AgGridProvider>
       </div>
 
