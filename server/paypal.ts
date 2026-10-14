@@ -23,6 +23,7 @@ export interface CartTotals {
 export class PayPalApiError extends Error {
   readonly issue: string | undefined;
   readonly plainReason: string;
+  readonly debugId: string | undefined;
 
   constructor(
     readonly status: number,
@@ -30,9 +31,19 @@ export class PayPalApiError extends Error {
   ) {
     super(String(payload.message ?? payload.name ?? "PayPal API request failed"));
     this.issue = payload.details?.[0]?.issue ?? payload.name;
+    this.debugId = typeof payload.debug_id === "string" ? payload.debug_id : undefined;
+    if (this.debugId) this.message = `${this.message} (debug_id: ${this.debugId})`;
     this.plainReason = paypalIssueReasons[this.issue ?? ""] ?? this.message;
   }
 }
+
+const MAX_RATE_LIMIT_RETRIES = 2;
+const DEFAULT_RETRY_AFTER_MS = 1000;
+const MAX_RETRY_AFTER_MS = 10_000;
+
+export const retryDelay = {
+  sleep: (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
+};
 
 const paypalIssueReasons: Record<string, string> = {
   INSTRUMENT_DECLINED: "PayPal declined the payment method. Choose a different payment method.",
@@ -67,10 +78,14 @@ export class PayPalClient {
           reference_id: "default",
           amount: this.orderAmount(totals),
         }],
-        application_context: {
-          return_url: urls?.returnUrl,
-          cancel_url: urls?.cancelUrl,
-          user_action: "PAY_NOW",
+        payment_source: {
+          paypal: {
+            experience_context: {
+              ...(urls?.returnUrl ? { return_url: urls.returnUrl } : {}),
+              ...(urls?.cancelUrl ? { cancel_url: urls.cancelUrl } : {}),
+              user_action: "PAY_NOW",
+            },
+          },
         },
       }),
     }, requestId);
@@ -120,18 +135,24 @@ export class PayPalClient {
 
   private async apiRequest(path: string, init: RequestInit, requestId?: string) {
     const token = await this.accessToken();
-    const response = await fetch(`${PAYPAL_API_BASE_URL}${path}`, {
-      ...init,
-      headers: {
-        authorization: `Bearer ${token}`,
-        "content-type": "application/json",
-        ...(requestId ? { "PayPal-Request-Id": requestId } : {}),
-        ...(init.headers ?? {}),
-      },
-    });
-    const payload = await readJson(response);
-    if (!response.ok) throw new PayPalApiError(response.status, payload);
-    return payload;
+    for (let attempt = 0; ; attempt++) {
+      const response = await fetch(`${PAYPAL_API_BASE_URL}${path}`, {
+        ...init,
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+          ...(requestId ? { "PayPal-Request-Id": requestId } : {}),
+          ...(init.headers ?? {}),
+        },
+      });
+      if (response.status === 429 && attempt < MAX_RATE_LIMIT_RETRIES) {
+        await retryDelay.sleep(retryAfterMs(response, attempt));
+        continue;
+      }
+      const payload = await readJson(response);
+      if (!response.ok) throw new PayPalApiError(response.status, payload);
+      return payload;
+    }
   }
 
   async accessToken() {
@@ -164,6 +185,14 @@ export function createPayPalClientFromEnv() {
 export function missingPayPalCredentials() {
   return (["PAYPAL_CLIENT_ID", "PAYPAL_CLIENT_SECRET"] as const)
     .filter((key) => !process.env[key]);
+}
+
+function retryAfterMs(response: Response, attempt: number) {
+  const header = Number(response.headers.get("retry-after"));
+  if (Number.isFinite(header) && header >= 0) {
+    return Math.min(header * 1000, MAX_RETRY_AFTER_MS);
+  }
+  return Math.min(DEFAULT_RETRY_AFTER_MS * 2 ** attempt, MAX_RETRY_AFTER_MS);
 }
 
 async function readJson(response: Response): Promise<Record<string, any>> {

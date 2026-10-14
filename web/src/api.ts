@@ -67,6 +67,13 @@ export interface Analytics {
 
 export type RunRow = Record<string, string | number | boolean | null>;
 
+export interface PayPalMcpTools {
+  connected: boolean;
+  server: string;
+  error?: string;
+  tools: { name: string; description?: string }[];
+}
+
 export interface PayPalVerification {
   checked: number;
   verified: number;
@@ -107,4 +114,5 @@ export const api = {
   paypalVerify: (id: string) =>
     call<PayPalVerification>(`/api/experiments/${id}/paypal/verify`, { method: "POST" }),
   paypal: (id: string) => call<PayPalVerification>(`/api/experiments/${id}/paypal`),
+  paypalMcpTools: () => call<PayPalMcpTools>("/api/paypal-mcp/tools"),
 };
