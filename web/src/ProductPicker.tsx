@@ -20,7 +20,7 @@ export function ProductPicker({
   onImported: (p: Product) => void;
 }) {
   const selected = products.find((p) => p.id === value);
-  const [searching, setSearching] = useState(!products.length && !value);
+  const [searching, setSearching] = useState(false);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<Channel3Hit[] | null>(null);
@@ -40,10 +40,12 @@ export function ProductPicker({
   );
 
   const storeMatches = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return products;
-    return products.filter((p) =>
-      `${p.title} ${p.brand}`.toLowerCase().includes(q));
+    const tokens = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    if (!tokens.length) return products;
+    return products.filter((p) => {
+      const hay = `${p.title} ${p.brand}`.toLowerCase();
+      return tokens.every((token) => hay.includes(token));
+    });
   }, [products, query]);
 
   const isUrl = query.trim().startsWith("http");
@@ -92,7 +94,10 @@ export function ProductPicker({
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
+        setOpen(false);
+        if (selected) { setSearching(false); setQuery(""); }
+      }
     };
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
@@ -148,6 +153,7 @@ export function ProductPicker({
       }
     } else if (e.key === "Escape") {
       setOpen(false);
+      if (selected) { setSearching(false); setQuery(""); }
     }
   };
 
