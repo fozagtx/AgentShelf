@@ -2,21 +2,12 @@ export const PAYPAL_API_BASE_URL = "https://api-m.sandbox.paypal.com";
 export const PAYPAL_MCP_URL = "https://mcp.sandbox.paypal.com/http";
 export const PAYPAL_MCP_SSE_URL = "https://mcp.sandbox.paypal.com/sse";
 export const CHANNEL3_API_BASE_URL = "https://api.trychannel3.com";
-export const FIX_MODEL = "gpt-5-6-terra";
-export const PRODUCT_FIX_MODEL = FIX_MODEL;
 export const PLATFORM_ISSUER = "https://agentshelf.local";
 export const PLATFORM_AUDIENCE = "merchant-cart-api";
 export const WORKFLOW_SERVICE_NAME = "agentshelf-workflows";
 export const DEFAULT_REPS = 3;
 export const SHOPPER_TIMEOUT_MS = 180_000;
 export const SHOPPER_MAX_ACTIONS = 18;
-
-export const MODEL_FLEET = [
-  "claude-sonnet-4-6",
-  "gpt-5-6-terra",
-  "nova-pro",
-  "mistral-large-3",
-] as const;
 
 export function getAppUrl() {
   const host = process.env.APP_HOST;

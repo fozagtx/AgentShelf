@@ -1,11 +1,10 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { motion } from "motion/react";
-import { api, type Experiment, type PayPalMcpTools, type Product } from "./api";
+import { api, type Experiment, type LlmProvider, type Models, type PayPalMcpTools, type Product } from "./api";
 import { Link, navigate } from "./router";
 import { EASE } from "./motion";
 import { useCrumb } from "./Shell";
 
-const FLEET = ["claude-sonnet-4-6", "gpt-5-6-terra", "nova-pro", "mistral-large-3"];
 
 function Waiting() {
   return <span className="mark waiting" aria-hidden />;
@@ -45,6 +44,8 @@ export function Experiments() {
   const [experiments, setExperiments] = useState<Experiment[] | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
   const [tools, setTools] = useState<PayPalMcpTools | null>(null);
+  const [modelsData, setModelsData] = useState<Models | null>(null);
+  const [selected, setSelected] = useState<string[]>([]);
   const [productId, setProductId] = useState("");
   const [query, setQuery] = useState("");
   const [reps, setReps] = useState(3);
@@ -55,14 +56,29 @@ export function Experiments() {
     api.experiments().then(setExperiments).catch((e) => { setExperiments([]); setError(e.message); });
     api.products().then((p) => { setProducts(p); if (p[0]) setProductId(p[0].id); }).catch(() => {});
     api.paypalMcpTools().then(setTools).catch(() => {});
+    api.models().then(setModelsData).catch((e) =>
+      setModelsData({
+        models: [],
+        errors: [{ provider: "openai", message: e instanceof Error ? e.message : String(e) }],
+        providers: { openai: false, nebius: false },
+      }));
   }, []);
+
+  const toggle = (key: string) =>
+    setSelected((current) => current.includes(key) ? current.filter((k) => k !== key) : [...current, key]);
+  const selectedModels = (modelsData?.models ?? []).filter((m) => selected.includes(`${m.provider}:${m.id}`));
 
   async function start(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
     setError("");
     try {
-      const { id } = await api.createExperiment({ productId, query, reps });
+      const { id } = await api.createExperiment({
+        productId,
+        query,
+        reps,
+        models: selectedModels.map(({ id: modelId, provider }) => ({ id: modelId, provider })),
+      });
       navigate(`/app/experiments/${id}`);
     } catch (err) {
       setError((err as Error).message);
@@ -98,10 +114,12 @@ export function Experiments() {
           </DashNode>
           <Link2 ok={Boolean(productId)} label={productId ? "Ready" : "Waiting"} />
           <DashNode index={1} icon={ico("M16 19v-1a4 4 0 0 0-8 0v1M12 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6M20 19v-1a3 3 0 0 0-2-2.8M4 19v-1a3 3 0 0 1 2-2.8")} title="Shopper fleet" sub="Live KERNEL browsers"
-            chips={<span className="chip"><img src="/logos/kernel.svg" alt="" />{FLEET.length} models</span>}>
+            chips={<span className="chip"><img src="/logos/kernel.svg" alt="" />{selectedModels.length} models</span>}>
             <div className="node-panel">
               <div className="node-panel-title">Models</div>
-              <ul className="node-rows">{FLEET.map((m) => <li key={m}><span className="node-row-label">{m}</span><span className="node-row-value">{runsPerModel} runs</span><Waiting /></li>)}</ul>
+              <ul className="node-rows">{selectedModels.length
+                ? selectedModels.map((m) => <li key={`${m.provider}:${m.id}`}><span className="node-row-label">{m.label}<span className="meta"> · {m.provider}</span></span><span className="node-row-value">{runsPerModel} runs</span><Waiting /></li>)
+                : <li><span className="node-row-label">Pick models in Setup</span><Waiting /></li>}</ul>
             </div>
           </DashNode>
           <Link2 ok={Boolean(query.trim())} label={query.trim() ? "Ready" : "Waiting"} />
@@ -164,12 +182,43 @@ export function Experiments() {
             <label htmlFor="reps">Runs per model and variant</label>
             <input id="reps" type="number" min={1} max={10} value={reps} onChange={(e) => setReps(Number(e.target.value))} />
           </div>
+          <div className="field">
+            <label>Models</label>
+            <div className="model-pick">
+              {modelsData === null && <div className="meta">Loading models</div>}
+              {modelsData && !modelsData.providers.openai && !modelsData.providers.nebius && (
+                <div className="meta">Add OPENAI_API_KEY or NEBIUS_API_KEY to load models</div>
+              )}
+              {modelsData?.errors.map((e) => (
+                <div key={e.provider} className="meta">{e.provider}: {e.message}</div>
+              ))}
+              {(["openai", "nebius"] as LlmProvider[]).map((provider) => {
+                const list = (modelsData?.models ?? []).filter((m) => m.provider === provider);
+                if (!list.length) return null;
+                return (
+                  <div key={provider}>
+                    <div className="pfield-label">{provider === "openai" ? "OpenAI" : "Nebius"}</div>
+                    {list.map((m) => {
+                      const key = `${m.provider}:${m.id}`;
+                      return (
+                        <label key={key} className="model-opt">
+                          <input type="checkbox" checked={selected.includes(key)} onChange={() => toggle(key)} />
+                          <span>{m.label}</span>
+                          <code>{m.id}</code>
+                        </label>
+                      );
+                    })}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
           <div className="pfield">
             <div className="pfield-label">Checkout</div>
             <div className="pfield-box dash-pay"><img src="/logos/paypal.png" alt="" />PayPal sandbox <span className="chip">Orders v2</span></div>
           </div>
           {error && <div className="notice">{error}</div>}
-          <button className="btn red dash-go" disabled={busy || !productId}>{busy ? "Starting fleet" : "Run the fleet"}</button>
+          <button className="btn red dash-go" disabled={busy || !productId || selectedModels.length === 0}>{busy ? "Starting fleet" : "Run the fleet"}</button>
         </form>
 
         <div className="dash-tools">

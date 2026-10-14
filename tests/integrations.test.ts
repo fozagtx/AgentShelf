@@ -4,23 +4,22 @@ import {
   PayPalClient,
   PayPalApiError,
 } from "../server/paypal.js";
-import { MODEL_FLEET, PAYPAL_API_BASE_URL } from "../server/config.js";
-import { gateway } from "../server/gateway.js";
+import { PAYPAL_API_BASE_URL } from "../server/config.js";
+import { listModels, llm } from "../server/llm.js";
 import { callPayPalMcp, listPayPalMcpTools } from "../server/paypalMcp.js";
 
 const paypalEnabled = Boolean(
   process.env.PAYPAL_CLIENT_ID && process.env.PAYPAL_CLIENT_SECRET,
 );
-const gatewayEnabled = Boolean(
-  process.env.ASTRO_GATEWAY_API_KEY && process.env.ASTRO_GATEWAY_URL,
-);
-const kernelEnabled = Boolean(
-  process.env.KERNEL_API_KEY && process.env.ASTRO_GATEWAY_API_KEY && process.env.ASTRO_GATEWAY_URL,
-);
+const llmEnabled = Boolean(process.env.OPENAI_API_KEY || process.env.NEBIUS_API_KEY);
+const kernelEnabled = Boolean(process.env.KERNEL_API_KEY);
 
-describe("live Astropods AI gateway", () => {
-  it.skipIf(!gatewayEnabled)("returns a required tool call from each shopper model", async () => {
-    const client = gateway();
+describe("live LLM providers", () => {
+  it.skipIf(!llmEnabled)("lists chat models and returns a tool call from one of them", async () => {
+    const { models } = await listModels();
+    expect(models.length).toBeGreaterThan(0);
+    const option = models.find((model) => model.provider === "openai") ?? models[0];
+    const client = llm(option.provider);
     const tools = [{
       type: "function" as const,
       function: {
@@ -34,16 +33,16 @@ describe("live Astropods AI gateway", () => {
         },
       },
     }];
-    for (const model of MODEL_FLEET) {
-      const response = await client.chat.completions.create({
-        model,
-        messages: [{ role: "user", content: "Report that you are ready." }],
-        tools,
-        tool_choice: "required",
-      });
-      const call = response.choices[0]?.message.tool_calls?.[0];
-      expect(call?.type === "function" ? call.function.name : undefined).toBe("report_ready");
-    }
+    const response = await client.chat.completions.create({
+      model: option.id,
+      messages: [{ role: "user", content: "Report that you are ready." }],
+      tools,
+      tool_choice: option.provider === "nebius"
+        ? { type: "function", function: { name: "report_ready" } }
+        : "required",
+    });
+    const call = response.choices[0]?.message.tool_calls?.[0];
+    expect(call?.type === "function" ? call.function.name : undefined).toBe("report_ready");
   });
 });
 

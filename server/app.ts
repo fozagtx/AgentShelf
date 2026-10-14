@@ -6,9 +6,7 @@ import type { Db } from "./db.js";
 import {
   configuredIntegrations,
   DEFAULT_REPS,
-  MODEL_FLEET,
   PAYPAL_MCP_URL,
-  PRODUCT_FIX_MODEL,
 } from "./config.js";
 import {
   countDocs,
@@ -32,7 +30,14 @@ import { createProductRoutes, getProduct } from "./products.js";
 import { getExperimentAnalytics } from "./analytics.js";
 import { searchCompetitors, missingChannel3Credentials } from "./channel3.js";
 import { startExperimentWorkflow } from "./workflows.js";
-import { gateway, hasGateway } from "./gateway.js";
+import {
+  configuredProviders,
+  hasLlm,
+  listModels,
+  llm,
+  missingLlmCredentials,
+  type Provider,
+} from "./llm.js";
 import { createImageRoutes } from "./images.js";
 import { missingPayPalCredentials } from "./paypal.js";
 import {
@@ -64,7 +69,21 @@ export async function createApp(options: AppOptions = {}) {
       kernel: configured.kernel,
       render: configured.render,
       database: configured.database,
-      astropods: hasGateway(),
+      openai: configuredProviders().includes("openai"),
+      nebius: configuredProviders().includes("nebius"),
+    });
+  });
+
+  app.get("/api/models", async (c) => {
+    const { models, errors } = await listModels();
+    const providers = configuredProviders();
+    return c.json({
+      models,
+      errors,
+      providers: {
+        openai: providers.includes("openai"),
+        nebius: providers.includes("nebius"),
+      },
     });
   });
 
@@ -73,19 +92,33 @@ export async function createApp(options: AppOptions = {}) {
     if (!input || !Array.isArray(input.messages) || input.messages.length === 0) {
       return c.json({ error: "A non-empty messages array is required." }, 400);
     }
-    const model = typeof input.model === "string" ? input.model : PRODUCT_FIX_MODEL;
-    if (!MODEL_FLEET.includes(model as (typeof MODEL_FLEET)[number])) {
-      return c.json({ error: "The requested model is not in the configured fleet." }, 400);
+    if (!hasLlm()) {
+      return c.json({
+        error: `LLM providers are unavailable. Missing environment variables: ${missingLlmCredentials().join(", ")}.`,
+      }, 503);
     }
-    if (!hasGateway()) {
-      return c.json({ error: "ASTRO_GATEWAY_API_KEY and ASTRO_GATEWAY_URL are not set" }, 503);
+    const { models: availableModels } = await listModels();
+    const requestedModel = typeof input.model === "string" ? input.model : undefined;
+    const requestedProvider = input.provider === "openai" || input.provider === "nebius"
+      ? input.provider as Provider
+      : undefined;
+    const option = requestedModel
+      ? availableModels.find((entry) =>
+          entry.id === requestedModel && (!requestedProvider || entry.provider === requestedProvider))
+      : availableModels[0];
+    if (requestedModel && !option) {
+      return c.json({ error: `Unknown model: ${requestedModel}.` }, 400);
     }
+    if (!option) {
+      return c.json({ error: "No chat models are available from the configured LLM providers." }, 503);
+    }
+    const model = option.id;
     const requestedTokens = Number(input.max_tokens);
     const maxTokens = Number.isFinite(requestedTokens)
       ? Math.max(1, Math.min(2000, Math.floor(requestedTokens)))
       : 2000;
     try {
-      const response = await gateway().chat.completions.create({
+      const response = await llm(option.provider).chat.completions.create({
         model,
         messages: input.messages as any,
         max_tokens: maxTokens,
@@ -100,7 +133,7 @@ export async function createApp(options: AppOptions = {}) {
       return c.json(response);
     } catch (error) {
       return c.json({
-        error: error instanceof Error ? error.message : "Astropods chat request failed.",
+        error: error instanceof Error ? error.message : "LLM chat request failed.",
       }, 502);
     }
   });
@@ -178,8 +211,24 @@ export async function createApp(options: AppOptions = {}) {
     const latest = experiments.sort((a, b) =>
       String(b.created_at ?? "").localeCompare(String(a.created_at ?? "")),
     )[0];
+    const input = await readJson(c) ?? {};
+    const { models: fixModels } = await listModels();
+    const requestedFixModel = typeof input.model === "string" ? input.model : undefined;
+    const fixOption = requestedFixModel
+      ? fixModels.find((entry) =>
+          entry.id === requestedFixModel &&
+          (input.provider === undefined || entry.provider === input.provider))
+      : fixModels[0];
+    if (requestedFixModel && !fixOption) {
+      return c.json({ message: `Unknown model: ${requestedFixModel}.` }, 400);
+    }
+    if (!fixOption) {
+      return c.json({
+        message: "No chat models are available from the configured LLM providers.",
+      }, 503);
+    }
     try {
-      const generated = await generateProductFix(product, latest?.competitors ?? []);
+      const generated = await generateProductFix(product, latest?.competitors ?? [], fixOption);
       const fixedVariant = {
         title: generated.fixed.title,
         description: generated.fixed.description,
@@ -208,16 +257,34 @@ export async function createApp(options: AppOptions = {}) {
     }
     const product = await getProduct(db, input.productId);
     if (!product) return c.json({ message: "Product not found." }, 404);
+    if (!Array.isArray(input.models) || input.models.length === 0) {
+      return c.json({ message: "A non-empty models array is required." }, 400);
+    }
     const missing = [
       ...missingChannel3Credentials(),
       ...(!process.env.RENDER_API_KEY ? ["RENDER_API_KEY"] : []),
       ...(!process.env.KERNEL_API_KEY ? ["KERNEL_API_KEY"] : []),
-      ...(!process.env.ASTRO_GATEWAY_API_KEY ? ["ASTRO_GATEWAY_API_KEY"] : []),
+      ...missingLlmCredentials(),
     ];
     if (missing.length) {
       return c.json({
         message: `Experiment creation is unavailable. Missing environment variables: ${[...new Set(missing)].join(", ")}.`,
       }, 503);
+    }
+    const { models: availableModels } = await listModels();
+    const selectedModels: { id: string; provider: Provider }[] = [];
+    for (const entry of input.models) {
+      const match = entry && typeof entry === "object" && !Array.isArray(entry)
+        ? availableModels.find((model) =>
+            model.id === (entry as Record<string, unknown>).id &&
+            model.provider === (entry as Record<string, unknown>).provider)
+        : undefined;
+      if (!match) {
+        return c.json({
+          message: `Unknown model: ${JSON.stringify(entry)}.`,
+        }, 400);
+      }
+      selectedModels.push({ id: match.id, provider: match.provider });
     }
     const reps = Number.isInteger(input.reps) && input.reps > 0
       ? Math.min(Number(input.reps), 20)
@@ -239,6 +306,7 @@ export async function createApp(options: AppOptions = {}) {
       product_id: product.id,
       query: input.query.trim(),
       reps,
+      models: selectedModels,
       status: "running",
       created_at: new Date().toISOString(),
       competitors: competitors.map((competitor) => {

@@ -1,7 +1,7 @@
 import { Render } from "@renderinc/sdk";
 import { task, type TaskContext } from "@renderinc/sdk/workflows";
 import type { Db } from "./db.js";
-import { DEFAULT_REPS, MODEL_FLEET, WORKFLOW_SERVICE_NAME } from "./config.js";
+import { DEFAULT_REPS, WORKFLOW_SERVICE_NAME } from "./config.js";
 import {
   EXPERIMENTS_TABLE,
   getDoc,
@@ -32,7 +32,10 @@ export function createWorkflowTasks(db: Db) {
         query: String(experiment.query),
         reps,
         competitors: Array.isArray(experiment.competitors) ? experiment.competitors : [],
-      }, product, MODEL_FLEET, reps);
+      }, product,
+        Array.isArray(experiment.models) ? experiment.models : [],
+        reps,
+      );
       for (const spec of specs) {
         await putDoc(db, RUNS_TABLE, spec.id, {
             ...spec,

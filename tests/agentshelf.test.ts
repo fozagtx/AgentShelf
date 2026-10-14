@@ -4,7 +4,7 @@ import { generateKeyPair, SignJWT } from "jose";
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import type { AddressInfo } from "node:net";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createApp } from "../server/app.js";
 import {
   deleteDoc,
@@ -19,7 +19,14 @@ import {
 import { writeEvent } from "../server/events.js";
 import { buildRunSpecs, shuffleShelf } from "../server/shelf.js";
 import { loadPlatformKey, mintPlatformToken } from "../server/platform.js";
-import { MODEL_FLEET } from "../server/config.js";
+import type { Provider } from "../server/llm.js";
+
+const TEST_MODELS: { id: string; provider: Provider }[] = [
+  { id: "gpt-4o", provider: "openai" },
+  { id: "gpt-4o-mini", provider: "openai" },
+  { id: "Qwen/Qwen3-235B", provider: "nebius" },
+  { id: "meta-llama/Llama-3.3-70B", provider: "nebius" },
+];
 import {
   cartInput,
   createSchemaValidator,
@@ -49,9 +56,11 @@ describe("AgentShelf with local PostgreSQL", () => {
     product = await response.json();
   });
 
-  it("returns a service-unavailable response when the Astropods key is missing", async () => {
-    const key = process.env.ASTRO_GATEWAY_API_KEY;
-    delete process.env.ASTRO_GATEWAY_API_KEY;
+  it("returns a service-unavailable response when LLM provider keys are missing", async () => {
+    const openAiKey = process.env.OPENAI_API_KEY;
+    const nebiusKey = process.env.NEBIUS_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    delete process.env.NEBIUS_API_KEY;
     try {
       const response = await request(app, "POST", "/api/ai/chat", undefined, {
         messages: [{ role: "user", content: "Summarize the results." }],
@@ -59,18 +68,35 @@ describe("AgentShelf with local PostgreSQL", () => {
       expect(response.status).toBe(503);
       expect(await response.json()).toHaveProperty("error");
     } finally {
-      if (key === undefined) delete process.env.ASTRO_GATEWAY_API_KEY;
-      else process.env.ASTRO_GATEWAY_API_KEY = key;
+      if (openAiKey === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = openAiKey;
+      if (nebiusKey === undefined) delete process.env.NEBIUS_API_KEY;
+      else process.env.NEBIUS_API_KEY = nebiusKey;
     }
   });
 
-  it("rejects chat models outside the configured fleet", async () => {
-    const response = await request(app, "POST", "/api/ai/chat", undefined, {
-      model: "unconfigured-model",
-      messages: [{ role: "user", content: "Summarize the results." }],
+  it("rejects chat models the configured providers do not list", async () => {
+    const openAiKey = process.env.OPENAI_API_KEY;
+    process.env.OPENAI_API_KEY = "test-openai-key";
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      expect(String(input)).toContain("api.openai.com");
+      return new Response(JSON.stringify({
+        data: [{ id: "gpt-4o" }, { id: "gpt-4o-mini" }],
+      }), { status: 200, headers: { "content-type": "application/json" } });
     });
-    expect(response.status).toBe(400);
-    expect(await response.json()).toHaveProperty("error");
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const response = await request(app, "POST", "/api/ai/chat", undefined, {
+        model: "unconfigured-model",
+        messages: [{ role: "user", content: "Summarize the results." }],
+      });
+      expect(response.status).toBe(400);
+      expect(await response.json()).toHaveProperty("error");
+    } finally {
+      vi.unstubAllGlobals();
+      if (openAiKey === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = openAiKey;
+    }
   });
 
   it("saves and clears report layout state", async () => {
@@ -199,10 +225,11 @@ describe("AgentShelf with local PostgreSQL", () => {
     expect(response.status).toBe(200);
     const status = await response.json();
     expect(Object.keys(status).sort()).toEqual([
-      "astropods",
       "channel3",
       "database",
       "kernel",
+      "nebius",
+      "openai",
       "paypal",
       "paypalMcp",
       "render",
@@ -354,16 +381,19 @@ describe("AgentShelf with local PostgreSQL", () => {
     expect(validate("Error")(error)).toBe(true);
   });
 
-  it("returns named 503 configuration errors for Channel3 and Astropods", async () => {
+  it("returns named 503 configuration errors for Channel3 and the LLM providers", async () => {
     const channel3ApiKey = process.env.CHANNEL3_API_KEY;
-    const gatewayApiKey = process.env.ASTRO_GATEWAY_API_KEY;
+    const openAiKey = process.env.OPENAI_API_KEY;
+    const nebiusKey = process.env.NEBIUS_API_KEY;
     delete process.env.CHANNEL3_API_KEY;
-    delete process.env.ASTRO_GATEWAY_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    delete process.env.NEBIUS_API_KEY;
     try {
       const experiment = await request(app, "POST", "/api/experiments", undefined, {
         productId: product.id,
         query: "insulated water bottle",
         reps: 1,
+        models: [{ id: "gpt-4o", provider: "openai" }],
       });
       expect(experiment.status).toBe(503);
       expect((await experiment.json()).message).toContain("CHANNEL3_API_KEY");
@@ -376,12 +406,14 @@ describe("AgentShelf with local PostgreSQL", () => {
         {},
       );
       expect(fix.status).toBe(503);
-      expect((await fix.json()).message).toContain("ASTRO_GATEWAY_API_KEY");
+      expect((await fix.json()).message).toContain("OPENAI_API_KEY");
     } finally {
       if (channel3ApiKey) process.env.CHANNEL3_API_KEY = channel3ApiKey;
       else delete process.env.CHANNEL3_API_KEY;
-      if (gatewayApiKey) process.env.ASTRO_GATEWAY_API_KEY = gatewayApiKey;
-      else delete process.env.ASTRO_GATEWAY_API_KEY;
+      if (openAiKey) process.env.OPENAI_API_KEY = openAiKey;
+      else delete process.env.OPENAI_API_KEY;
+      if (nebiusKey) process.env.NEBIUS_API_KEY = nebiusKey;
+      else delete process.env.NEBIUS_API_KEY;
     }
   });
 
@@ -620,14 +652,19 @@ describe("AgentShelf with local PostgreSQL", () => {
         title: `Competitor ${index}`,
       })),
     };
-    const specs = buildRunSpecs(experiment, fixedProduct, MODEL_FLEET, 2);
+    const specs = buildRunSpecs(experiment, fixedProduct, TEST_MODELS, 2);
     expect(specs).toHaveLength(16);
     expect(new Set(specs.map((spec) => spec.model))).toEqual(
-      new Set(MODEL_FLEET),
+      new Set(TEST_MODELS.map((model) => model.id)),
+    );
+    expect(new Set(specs.map((spec) => spec.provider))).toEqual(
+      new Set(TEST_MODELS.map((model) => model.provider)),
     );
     expect(specs.filter((spec) => spec.variant === "original")).toHaveLength(8);
     expect(specs.filter((spec) => spec.variant === "fixed")).toHaveLength(8);
-    expect(specs.every((spec) => spec.provider === "Astropods")).toBe(true);
+    expect(specs.every((spec) =>
+      spec.provider === TEST_MODELS.find((model) => model.id === spec.model)?.provider,
+    )).toBe(true);
     expect(specs.every((spec) => spec.experimentId === experiment.id)).toBe(true);
     expect(specs.every((spec) => spec.shelfOrder.length === 6)).toBe(true);
     expect(specs.every((spec) => spec.query === experiment.query)).toBe(true);
@@ -715,11 +752,13 @@ describe("AgentShelf with local PostgreSQL", () => {
     },
   );
 
-  integration(Boolean(process.env.ASTRO_GATEWAY_API_KEY))(
+  integration(Boolean(process.env.OPENAI_API_KEY || process.env.NEBIUS_API_KEY))(
     "requests structured live product copy fixes",
     async () => {
       const { generateProductFix } = await import("../server/fixes.js");
-      const fixed = await generateProductFix(product, []);
+      const { listModels } = await import("../server/llm.js");
+      const { models } = await listModels();
+      const fixed = await generateProductFix(product, [], models[0]);
       expect(fixed.fixed.title).toBeTruthy();
       expect(fixed.fixed.description).toBeTruthy();
       expect(Array.isArray(fixed.fixed.key_features)).toBe(true);

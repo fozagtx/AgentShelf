@@ -4,6 +4,7 @@ import { Link } from "./router";
 import { FlowCanvas } from "./FlowCanvas";
 import { api, type Analytics, type Experiment, type PayPalMcpTools, type RunRow } from "./api";
 import { CountUp, EASE, Item, Stagger, hoverCard } from "./motion";
+import "./hero.css";
 
 const loop = (duration: number, delay = 0) => ({ duration, delay, repeat: Infinity, ease: "easeInOut" as const });
 
@@ -64,6 +65,8 @@ function useLatestExperiment() {
   return data;
 }
 
+const GHOST: [string, string][] = [["n1", "Your listing"], ["n2", "Competitor shelf"], ["n3", "Shopper fleet"], ["n4", "PayPal checkout"], ["n5", "Results"]];
+
 function Window() {
   const data = useLatestExperiment();
   const exp = data?.exp;
@@ -88,14 +91,20 @@ function Window() {
         {data ? (
           <FlowCanvas exp={data.exp} stats={data.stats} runs={data.runs} initial="checkout" />
         ) : (
-          <div className="x-window-empty">
-            {data === undefined ? <span className="meta">Loading latest experiment</span> : (
-              <>
-                <b>No experiments yet</b>
-                <span className="meta">Run a shelf test and its live workflow shows up here.</span>
-                <Link to="/app" className="x-btn sm">Run your first test</Link>
-              </>
-            )}
+          <div className="x-ghost">
+            {GHOST.map(([area, title]) => (
+              <div key={title} className="x-ghost-node" style={{ gridArea: area }}><b>{title}</b><i /><i /></div>
+            ))}
+            {(["w1 h", "w2 h", "w3 v", "w4 h"] as const).map((w) => <span key={w} className={`x-ghost-wire ${w.split(" ")[1]}`} style={{ gridArea: w.split(" ")[0] }} />)}
+            <div className="x-ghost-cta">
+              {data === undefined ? <span className="meta">Loading latest experiment</span> : (
+                <>
+                  <b>No experiments yet</b>
+                  <span className="meta">Run a shelf test and its live workflow shows up here.</span>
+                  <Link to="/app" className="x-btn sm">Run your first test</Link>
+                </>
+              )}
+            </div>
           </div>
         )}
       </div>
@@ -116,7 +125,7 @@ function MiniFlow() {
 }
 
 function Orbit() {
-  const models = ["Claude", "GPT", "Nova", "Mistral", "Claude", "GPT"];
+  const models = ["OpenAI", "Nebius", "OpenAI", "Nebius", "OpenAI", "Nebius"];
   return (
     <div className="orbit">
       <svg viewBox="0 0 300 180">{models.map((_, i) => {
@@ -163,7 +172,7 @@ function Curve() {
 
 const how: { tag: string; title: string; body: string; art: ReactNode; wide?: boolean }[] = [
   { tag: "01 · Publish", title: "Your store, served to agents", body: "Products go live on PayPal Store Sync cart endpoints and a product feed any shopping agent can read.", art: <MiniFlow />, wide: true },
-  { tag: "02 · Fleet", title: "A fleet of real shoppers", body: "Claude, GPT, Nova and Mistral open live KERNEL browsers and shop your listing next to Channel3 competitors.", art: <Orbit /> },
+  { tag: "02 · Fleet", title: "A fleet of real shoppers", body: "The OpenAI and Nebius models you pick open live KERNEL browsers and shop your listing next to Channel3 competitors.", art: <Orbit /> },
   { tag: "03 · Checkout", title: "Every run pays with PayPal", body: "Agents approve and capture sandbox orders. Verify any experiment's orders against the PayPal MCP server.", art: <Branch /> },
   { tag: "04 · Results", title: "Fix what loses the sale", body: "Share of picks by model, the checkout funnel, and the listing rewrite that wins agents back.", art: <Curve />, wide: true },
 ];
@@ -176,7 +185,7 @@ const findings: { value: ReactNode; label: string; source: string }[] = [
 
 const logos: [string, string][] = [
   ["/logos/paypal.png", "PayPal"], ["/logos/channel3.png", "Channel3"], ["/logos/kernel.svg", "KERNEL"], ["/logos/render.svg", "Render"],
-  ["/logos/aggrid.svg", "AG Grid"], ["/logos/astropods.svg", "Astropods"],
+  ["/logos/aggrid.svg", "AG Grid"], ["", "OpenAI"], ["", "Nebius"],
 ];
 
 export function Landing() {
@@ -198,12 +207,13 @@ export function Landing() {
             <div className="x-hero-cta">
               <a href="#how" className="x-btn white">Explore how it works</a>
               <Link to="/app" className="x-btn">Get started</Link>
-              <span className="x-hero-chip"><span className="x-mark"><i /></span>Across 4 models</span>
+              <span className="x-hero-chip"><span className="x-mark"><i /></span>OpenAI + Nebius models</span>
             </div>
           </div>
         </div>
         <motion.div className="x-hero-window" initial={{ opacity: 0, y: 40 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.25, duration: 1, ease: EASE }}>
           <Window />
+          <span className="x-cursor" aria-hidden><svg viewBox="0 0 24 24"><path d="M5 3l6.5 17 2.6-7.1L21 10.4z" /></svg></span>
         </motion.div>
       </section>
 
@@ -268,8 +278,8 @@ export function Landing() {
             <p>Real browsers, real competitors, real PayPal sandbox orders. No mocks between your listing and the agent.</p>
           </div>
           <div className="x-logos">
-            {logos.map(([src, name]) => <div key={name} className="x-logo"><img src={src} alt="" /><span>{name}</span></div>)}
-            <div className="x-logo hatch" /><div className="x-logo hatch" />
+            {logos.map(([src, name]) => <div key={name} className="x-logo">{src && <img src={src} alt="" />}<span>{name}</span></div>)}
+            <div className="x-logo hatch" />
           </div>
         </div>
       </section>

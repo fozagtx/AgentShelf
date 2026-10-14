@@ -5,7 +5,23 @@ export interface Status {
   kernel: boolean;
   render: boolean;
   database: boolean;
-  astropods: boolean;
+  openai: boolean;
+  nebius: boolean;
+}
+
+export type LlmProvider = "openai" | "nebius";
+
+export interface ModelOption {
+  id: string;
+  provider: LlmProvider;
+  label: string;
+  contextLength?: number;
+}
+
+export interface Models {
+  models: ModelOption[];
+  errors: { provider: LlmProvider; message: string }[];
+  providers: { openai: boolean; nebius: boolean };
 }
 
 export interface Channel3Hit { channel3Id: string; title: string; brand: string; price: number; imageUrl: string; url: string }
@@ -45,6 +61,7 @@ export interface Experiment {
   } | null;
   query: string;
   reps: number;
+  models?: { id: string; provider: LlmProvider }[];
   status: string;
   created_at: string;
   competitors: Competitor[];
@@ -97,7 +114,9 @@ export const api = {
   products: () => call<Product[]>("/api/products"),
   createProduct: (p: Omit<Product, "id">) => call<Product>("/api/products", { method: "POST", body: JSON.stringify(p) }),
   updateProduct: (id: string, p: Partial<Product>) => call<Product>(`/api/products/${id}`, { method: "PUT", body: JSON.stringify(p) }),
-  fix: (id: string) => call<Product>(`/api/products/${id}/fix`, { method: "POST" }),
+  fix: (id: string, model?: { id: string; provider: LlmProvider }) =>
+    call<Product>(`/api/products/${id}/fix`, { method: "POST", body: JSON.stringify(model ?? {}) }),
+  models: () => call<Models>("/api/models"),
   importProduct: (body: { url?: string; channel3Id?: string; inventory?: number }) => call<Product>("/api/products/import", { method: "POST", body: JSON.stringify(body) }),
   searchChannel3: (q: string) => call<Channel3Hit[]>(`/api/products/search?q=${encodeURIComponent(q)}`),
   experiments: () => call<Experiment[]>("/api/experiments"),
@@ -107,7 +126,7 @@ export const api = {
       method: "PUT",
       body: JSON.stringify({ state }),
     }),
-  createExperiment: (b: { productId: string; query: string; reps: number }) =>
+  createExperiment: (b: { productId: string; query: string; reps: number; models: { id: string; provider: LlmProvider }[] }) =>
     call<{ id: string }>("/api/experiments", { method: "POST", body: JSON.stringify(b) }),
   analytics: (id: string) => call<Analytics>(`/api/experiments/${id}/analytics`),
   runs: (id: string) => call<RunRow[]>(`/api/experiments/${id}/runs`),

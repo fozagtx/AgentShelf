@@ -4,7 +4,7 @@ import { AgGridProvider, AgGridReact } from "ag-grid-react";
 import { AgStudio, AgStudioProvider, createWidgets } from "ag-studio-react";
 import { directLlmRunner, createAiHarness, studioTheme, type AgReportState } from "ag-studio";
 import { api, type Analytics, type Experiment, type RunRow } from "./api";
-import { LiveShoppers } from "./LiveShoppers";
+import { LiveShoppers, useLiveRuns } from "./LiveShoppers";
 import { AsciiImage } from "./Ascii";
 import { FlowCanvas } from "./FlowCanvas";
 import { useCrumb } from "./Shell";
@@ -16,7 +16,6 @@ import { createDefaultReportState } from "./studio/report";
 import { createAgentShelfWidgets } from "./studio/widgets";
 
 const LICENSE = import.meta.env.VITE_AG_STUDIO_LICENSE_KEY ?? "";
-const AGENT_MODELS = ["claude-sonnet-4-6", "gpt-5-6-terra", "nova-pro", "mistral-large-3"];
 const fonts = { fontFamily: "Mona Sans Variable, system-ui, sans-serif" };
 const palette = {
   accentColor: "#E1261C",
@@ -82,8 +81,22 @@ export function ExperimentView({ id }: { id: string }) {
     exp?.report_state && typeof exp.report_state === "object" && !Array.isArray(exp.report_state),
   );
   const widgets = useMemo(() => (base: any) => createAgentShelfWidgets(base), []);
+  const live = useLiveRuns(id);
+  const harnessModels = useMemo(() => {
+    const fromExp = (exp?.models ?? []).map((m) => ({
+      id: m.id,
+      label: `${m.id} · ${m.provider}`,
+    }));
+    if (fromExp.length) return fromExp;
+    const seen = new Set<string>();
+    for (const run of runs) {
+      const model = String(run.model ?? "");
+      if (model) seen.add(model);
+    }
+    return [...seen].map((model) => ({ id: model, label: model }));
+  }, [exp, runs]);
   const ai = useMemo(() => ({ api: studioApi }: any) => {
-    const adapter = createGatewayAdapter();
+    const adapter = createGatewayAdapter(harnessModels[0]?.id);
     return createAiHarness(studioApi, ({ builtIn }: any) => {
       const builtIns = Object.entries(builtIn).map(([agentId, definition]: [string, any]) => {
         if (agentId !== "lead") return directLlmRunner({ ...definition, adapter });
@@ -154,10 +167,10 @@ export function ExperimentView({ id }: { id: string }) {
       return {
         agents: [...builtIns, analyst],
         primary: "lead",
-        models: AGENT_MODELS.map((model) => ({ id: model, label: model })),
+        models: harnessModels,
       };
     });
-  }, []);
+  }, [harnessModels]);
 
   const cols = useMemo<ColDef[]>(() => [
     { field: "model", filter: true, flex: 1.2, pinned: "left" },
@@ -221,11 +234,11 @@ export function ExperimentView({ id }: { id: string }) {
 
   return (
     <div className="enter">
-      <FlowCanvas exp={exp} stats={stats} runs={runs} checkoutExtra={<PayPalVerify id={id} />} />
+      <FlowCanvas exp={exp} stats={stats} runs={runs} live={live ?? undefined} initial={exp.status === "running" ? "fleet" : undefined} checkoutExtra={<PayPalVerify id={id} />} />
       <div className="exp-rest">
       <h2 className="section" id="live">Shoppers right now</h2>
       <div style={{ height: 16 }} />
-      <LiveShoppers id={id} />
+      <LiveShoppers id={id} runs={live} />
 
       <div className="gap-xl" />
       <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 10, marginBottom: 12 }}>
