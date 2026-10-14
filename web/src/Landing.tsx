@@ -1,8 +1,8 @@
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { motion } from "motion/react";
 import { Link } from "./router";
 import { FlowCanvas } from "./FlowCanvas";
-import { demoExperiment, demoRuns, demoStats } from "./demo";
+import { api, type Analytics, type Experiment, type PayPalMcpTools, type RunRow } from "./api";
 import { CountUp, EASE, Item, Stagger, hoverCard } from "./motion";
 
 const loop = (duration: number, delay = 0) => ({ duration, delay, repeat: Infinity, ease: "easeInOut" as const });
@@ -43,25 +43,61 @@ function Nav() {
   );
 }
 
+type Latest = { exp: Experiment; stats: Analytics; runs: RunRow[] };
+
+function useLatestExperiment() {
+  const [data, setData] = useState<Latest | null | undefined>(undefined);
+  useEffect(() => {
+    let live = true;
+    api.experiments()
+      .then(async (list) => {
+        const sorted = [...list].sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+        const pick = sorted.find((x) => x.status === "complete") ?? sorted[0];
+        if (!pick) return null;
+        const [exp, stats, runs] = await Promise.all([api.experiment(pick.id), api.analytics(pick.id), api.runs(pick.id)]);
+        return { exp, stats, runs };
+      })
+      .then((d) => { if (live) setData(d); })
+      .catch(() => { if (live) setData(null); });
+    return () => { live = false; };
+  }, []);
+  return data;
+}
+
 function Window() {
+  const data = useLatestExperiment();
+  const exp = data?.exp;
   return (
     <div className="x-window">
       <div className="x-window-rail">
         <span className="x-mark"><i /></span>
-        {["M4 6h16M4 12h16M4 18h10", "M5 5h6v6H5zM13 5h6v6h-6zM5 13h6v6H5zM13 13h6v6h-6z", "M12 3v18M3 12h18", "M4 19V9M10 19V5M16 19v-7M22 19H2"].map((d, i) => (
-          <svg key={d} className={i === 1 ? "on" : ""} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"><path d={d} /></svg>
-        ))}
+        <Link to="/app" className="on" aria-label="Experiments"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"><path d="M5 5h6v6H5zM13 5h6v6h-6zM5 13h6v6H5zM13 13h6v6h-6z" /></svg></Link>
+        <Link to="/app/store" aria-label="Store"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"><path d="M5 8h14l-1.2 11.2a1 1 0 0 1-1 .8H7.2a1 1 0 0 1-1-.8L5 8Zm4 0V7a3 3 0 0 1 6 0v1" /></svg></Link>
       </div>
       <div className="x-window-main">
         <div className="x-window-bar">
-          <span className="x-crumb">Experiments <b>›</b> Merino crew sweater <span className="x-live">Running</span></span>
+          <span className="x-crumb">
+            Experiments
+            {exp && <><b>/</b><span className="x-crumb-title">{exp.query}</span><span className={`x-live ${exp.status === "complete" ? "ok" : exp.status === "failed" ? "bad" : ""}`}>{exp.status}</span></>}
+          </span>
           <span className="x-window-tools">
-            <span className="x-zoom">− 100% +</span>
-            <span className="x-btn sm white">Share</span>
-            <span className="x-btn sm">Run test</span>
+            {exp && <Link to={`/app/experiments/${exp.id}`} className="x-btn sm white">Open</Link>}
+            <Link to="/app" className="x-btn sm">Run test</Link>
           </span>
         </div>
-        <FlowCanvas exp={demoExperiment} stats={demoStats} runs={demoRuns} initial="checkout" />
+        {data ? (
+          <FlowCanvas exp={data.exp} stats={data.stats} runs={data.runs} initial="checkout" />
+        ) : (
+          <div className="x-window-empty">
+            {data === undefined ? <span className="meta">Loading latest experiment</span> : (
+              <>
+                <b>No experiments yet</b>
+                <span className="meta">Run a shelf test and its live workflow shows up here.</span>
+                <Link to="/app" className="x-btn sm">Run your first test</Link>
+              </>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -128,7 +164,7 @@ function Curve() {
 const how: { tag: string; title: string; body: string; art: ReactNode; wide?: boolean }[] = [
   { tag: "01 · Publish", title: "Your store, served to agents", body: "Products go live on PayPal Store Sync cart endpoints and a product feed any shopping agent can read.", art: <MiniFlow />, wide: true },
   { tag: "02 · Fleet", title: "A fleet of real shoppers", body: "Claude, GPT, Nova and Mistral open live KERNEL browsers and shop your listing next to Channel3 competitors.", art: <Orbit /> },
-  { tag: "03 · Checkout", title: "Every run pays with PayPal", body: "Agents approve and capture sandbox orders. We re-check each order with the PayPal MCP server.", art: <Branch /> },
+  { tag: "03 · Checkout", title: "Every run pays with PayPal", body: "Agents approve and capture sandbox orders. Verify any experiment's orders against the PayPal MCP server.", art: <Branch /> },
   { tag: "04 · Results", title: "Fix what loses the sale", body: "Share of picks by model, the checkout funnel, and the listing rewrite that wins agents back.", art: <Curve />, wide: true },
 ];
 
@@ -143,9 +179,9 @@ const logos: [string, string][] = [
   ["/logos/aggrid.svg", "AG Grid"], ["/logos/astropods.svg", "Astropods"],
 ];
 
-const paypalTools = ["get_order", "list_transactions", "list_disputes", "get_dispute", "get_merchant_insights", "get_refund"];
-
 export function Landing() {
+  const [tools, setTools] = useState<PayPalMcpTools | null>(null);
+  useEffect(() => { api.paypalMcpTools().then(setTools).catch(() => {}); }, []);
   return (
     <div className="x">
       <section className="x-hero">
@@ -210,14 +246,14 @@ export function Landing() {
           <div>
             <Badge>PayPal AI Toolkit</Badge>
             <h2>Checkout verified by PayPal's own agent tools</h2>
-            <p>Orders run on PayPal Orders v2 with idempotent request IDs, <code>Retry-After</code> backoff and <code>debug_id</code> logging, following the PayPal AI Toolkit best practices. Every captured run is re-read through the PayPal sandbox MCP server.</p>
+            <p>Orders run on PayPal Orders v2 with idempotent request IDs, <code>Retry-After</code> backoff and <code>debug_id</code> logging, following the PayPal AI Toolkit best practices. Captured orders can be re-read through the PayPal sandbox MCP server.</p>
             <Link to="/app" className="x-btn">Open the canvas</Link>
           </div>
           <div className="x-tools">
-            <div className="x-tools-head"><img src="/logos/paypal.png" alt="" />paypal-sandbox <span>MCP</span></div>
-            {paypalTools.map((t, i) => (
+            <div className="x-tools-head"><img src="/logos/paypal.png" alt="" />paypal-sandbox <span>MCP</span><em className={`x-pill ${tools?.connected ? "ok" : "idle"}`}>{tools ? (tools.connected ? "Connected" : "Not connected") : "Checking"}</em></div>
+            {(tools?.tools ?? []).map(({ name: t, description }, i) => (
               <motion.div key={t} className="x-tool" initial={{ opacity: 0, x: 12 }} whileInView={{ opacity: 1, x: 0 }} viewport={{ once: true }} transition={{ delay: i * 0.07, ease: EASE, duration: 0.5 }}>
-                <code>{t}</code><em className="x-pill ok">Ready</em>
+                <code title={description}>{t}</code>
               </motion.div>
             ))}
           </div>

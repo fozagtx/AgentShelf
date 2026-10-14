@@ -3,8 +3,13 @@ import { motion } from "motion/react";
 import { api, type Experiment, type PayPalMcpTools, type Product } from "./api";
 import { Link, navigate } from "./router";
 import { EASE } from "./motion";
+import { useCrumb } from "./Shell";
 
 const FLEET = ["claude-sonnet-4-6", "gpt-5-6-terra", "nova-pro", "mistral-large-3"];
+
+function Waiting() {
+  return <span className="mark waiting" aria-hidden />;
+}
 
 function Check() {
   return <svg className="mark done" width="14" height="14" viewBox="0 0 16 16" aria-hidden><path d="M3 8.5 6.5 12 13 4.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>;
@@ -66,6 +71,8 @@ export function Experiments() {
   }
 
   const product = products.find((p) => p.id === productId);
+  const runsPerModel = reps * (product?.fixed_variant ? 2 : 1);
+  useCrumb({ title: "New shelf test", status: "draft" });
   const productTitle = (id: string) => products.find((p) => p.id === id)?.title ?? id;
   const steps: [string, boolean][] = [["Setup", Boolean(productId)], ["Configure", Boolean(query.trim())], ["Run", busy]];
 
@@ -73,9 +80,8 @@ export function Experiments() {
     <div className="enter dash">
       <div className="canvas dash-canvas">
         <div className="dash-head">
-          <span className="x-badge"><i />Shelf tests</span>
-          <h1 className="display">See how AI shoppers treat your listing</h1>
-          <p className="lede">Configure a test on the right. Shoppers on every model compare your product with real competitors and try to pay with PayPal.</p>
+          <h1>New shelf test</h1>
+          <p>Every model shops your listing next to real Channel3 competitors, then tries to pay with PayPal.</p>
         </div>
 
         <div className="dash-flow">
@@ -85,30 +91,30 @@ export function Experiments() {
               <div className="node-panel-title">{product?.title ?? "Pick a product"}</div>
               <div className="node-panel-sub">{query || "Shopper intent not set"}</div>
               <ul className="node-rows">
-                <li><span className="node-row-label">Original listing</span><span className="node-row-value">{product ? `$${product.price.toFixed(2)}` : ""}</span><Check /></li>
-                <li><span className="node-row-label">AI-fixed listing</span><span className="node-row-value">{product?.fixed_variant ? "ready" : "auto"}</span><Check /></li>
+                <li><span className="node-row-label">Original listing</span><span className="node-row-value">{product ? `$${product.price.toFixed(2)}` : "—"}</span>{product ? <Check /> : <Waiting />}</li>
+                <li><span className="node-row-label">AI-fixed listing</span><span className="node-row-value">{product?.fixed_variant ? "Included" : "Not generated"}</span>{product?.fixed_variant ? <Check /> : <Waiting />}</li>
               </ul>
             </div>
           </DashNode>
-          <Link2 ok={Boolean(productId)} label={productId ? "Success" : "Waiting"} />
+          <Link2 ok={Boolean(productId)} label={productId ? "Ready" : "Waiting"} />
           <DashNode index={1} icon={ico("M16 19v-1a4 4 0 0 0-8 0v1M12 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6M20 19v-1a3 3 0 0 0-2-2.8M4 19v-1a3 3 0 0 1 2-2.8")} title="Shopper fleet" sub="Live KERNEL browsers"
             chips={<span className="chip"><img src="/logos/kernel.svg" alt="" />{FLEET.length} models</span>}>
             <div className="node-panel">
               <div className="node-panel-title">Models</div>
-              <ul className="node-rows">{FLEET.map((m) => <li key={m}><span className="node-row-label">{m}</span><span className="node-row-value">{reps * 2} runs</span><Check /></li>)}</ul>
+              <ul className="node-rows">{FLEET.map((m) => <li key={m}><span className="node-row-label">{m}</span><span className="node-row-value">{runsPerModel} runs</span><Waiting /></li>)}</ul>
             </div>
           </DashNode>
-          <Link2 ok={Boolean(query.trim())} label={query.trim() ? "Success" : "Waiting"} />
+          <Link2 ok={Boolean(query.trim())} label={query.trim() ? "Ready" : "Waiting"} />
           <DashNode index={2} icon={ico("M3 7h18v10H3zM3 11h18")} title="PayPal checkout" sub="Store Sync cart to sandbox order"
             chips={<><span className="chip"><img src="/logos/paypal.png" alt="" />Orders v2</span><span className="chip">MCP</span></>}>
             <div className={`node-info${tools?.connected ? "" : " muted"}`}>
-              {tools?.connected ? `PayPal MCP connected · ${tools.tools.length} tools` : "Captured orders are re-checked through the PayPal sandbox MCP server."}
+              {tools?.connected ? `PayPal MCP connected · ${tools.tools.length} tools` : "PayPal sandbox not connected. Set PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET to capture orders."}
             </div>
           </DashNode>
         </div>
 
         <div className="dash-runs">
-          <div className="dash-runs-head"><span className="x-badge"><i />Experiments</span><span className="meta">{experiments?.length ?? 0} total</span></div>
+          <div className="dash-runs-head"><h2>Recent experiments</h2><span className="meta">{experiments?.length ?? 0} total</span></div>
           {experiments === null && <div className="node empty">Loading</div>}
           {experiments?.length === 0 && <div className="node empty">No experiments yet. Configure one on the right.</div>}
           <div className="dash-grid">
