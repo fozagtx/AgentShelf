@@ -5,6 +5,10 @@ import { Item, Stagger, hoverCard } from "./motion";
 
 const blank = { title: "", description: "", brand: "", price: 0, image_url: "", inventory: 10, category: "", key_features: [] as string[] };
 
+const validModels = (data: unknown): data is Models =>
+  Boolean(data && typeof data === "object" && Array.isArray((data as Models).models) &&
+    typeof (data as Models).providers === "object" && (data as Models).providers !== null);
+
 export function Store() {
   const [products, setProducts] = useState<Product[] | null>(null);
   const [draft, setDraft] = useState(blank);
@@ -56,8 +60,9 @@ export function Store() {
   const load = () => api.products().then(setProducts).catch((e) => { setProducts([]); setError(e.message); });
   useEffect(() => {
     load();
-    api.models().then(setModelsData).catch(() =>
-      setModelsData({ models: [], errors: [], providers: { openai: false, nebius: false } }));
+    api.models()
+      .then((data) => setModelsData(validModels(data) ? data : { models: [], errors: [], providers: { openai: false, nebius: false } }))
+      .catch(() => setModelsData({ models: [], errors: [], providers: { openai: false, nebius: false } }));
   }, []);
 
   async function publish(e: React.FormEvent) {
@@ -105,9 +110,9 @@ export function Store() {
           aria-label="Model for AI copy fixes"
           value={fixModel}
           onChange={(e) => setFixModel(e.target.value)}
-          disabled={!modelsData?.models.length}
+          disabled={!(modelsData?.models?.length)}
         >
-          {modelsData?.models.length
+          {modelsData?.models?.length
             ? <><option value="">Fix model (auto)</option>
                 {modelsData.models.map((m) => <option key={`${m.provider}:${m.id}`} value={`${m.provider}:${m.id}`}>{m.label} · {m.provider}</option>)}</>
             : <option value="">Add OPENAI_API_KEY or NEBIUS_API_KEY</option>}

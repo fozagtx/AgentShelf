@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { motion } from "motion/react";
 import { api, type Experiment, type LlmProvider, type Models, type PayPalMcpTools, type Product } from "./api";
 import { Link, navigate } from "./router";
+import { ProductPicker } from "./ProductPicker";
 import { EASE } from "./motion";
 import { useCrumb } from "./Shell";
 
@@ -38,6 +39,10 @@ function DashNode({ icon, title, sub, chips, children, index }: { icon: ReactNod
   );
 }
 
+const validModels = (data: unknown): data is Models =>
+  Boolean(data && typeof data === "object" && Array.isArray((data as Models).models) &&
+    typeof (data as Models).providers === "object" && (data as Models).providers !== null);
+
 const ico = (d: string) => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d={d} /></svg>;
 
 export function Experiments() {
@@ -45,6 +50,7 @@ export function Experiments() {
   const [products, setProducts] = useState<Product[]>([]);
   const [tools, setTools] = useState<PayPalMcpTools | null>(null);
   const [modelsData, setModelsData] = useState<Models | null>(null);
+  const [modelsError, setModelsError] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
   const [productId, setProductId] = useState("");
   const [query, setQuery] = useState("");
@@ -56,12 +62,12 @@ export function Experiments() {
     api.experiments().then(setExperiments).catch((e) => { setExperiments([]); setError(e.message); });
     api.products().then((p) => { setProducts(p); if (p[0]) setProductId(p[0].id); }).catch(() => {});
     api.paypalMcpTools().then(setTools).catch(() => {});
-    api.models().then(setModelsData).catch((e) =>
-      setModelsData({
-        models: [],
-        errors: [{ provider: "openai", message: e instanceof Error ? e.message : String(e) }],
-        providers: { openai: false, nebius: false },
-      }));
+    api.models()
+      .then((data) => setModelsData(validModels(data) ? data : { models: [], errors: [], providers: { openai: false, nebius: false } }))
+      .catch((e) => {
+        setModelsData({ models: [], errors: [], providers: { openai: false, nebius: false } });
+        setModelsError(e instanceof Error ? e.message : String(e));
+      });
   }, []);
 
   const toggle = (key: string) =>
@@ -168,11 +174,13 @@ export function Experiments() {
         </ol>
         <form className="side-body" onSubmit={start}>
           <div className="field">
-            <label htmlFor="product">Your product*</label>
-            <select id="product" value={productId} onChange={(e) => setProductId(e.target.value)} required>
-              {products.length === 0 && <option value="">Publish a product in Store first</option>}
-              {products.map((p) => <option key={p.id} value={p.id}>{p.title}</option>)}
-            </select>
+            <label id="product-label">Your product*</label>
+            <ProductPicker
+              products={products}
+              value={productId}
+              onChange={setProductId}
+              onImported={(p) => setProducts((current) => [p, ...current])}
+            />
           </div>
           <div className="field">
             <label htmlFor="query">Shopper intent*</label>
@@ -185,11 +193,12 @@ export function Experiments() {
           <div className="field">
             <label>Models</label>
             <div className="model-pick">
+              {modelsError && <div className="meta">Couldn't load models: {modelsError}</div>}
               {modelsData === null && <div className="meta">Loading models</div>}
-              {modelsData && !modelsData.providers.openai && !modelsData.providers.nebius && (
+              {modelsData && !modelsError && !modelsData.providers?.openai && !modelsData.providers?.nebius && (
                 <div className="meta">Add OPENAI_API_KEY or NEBIUS_API_KEY to load models</div>
               )}
-              {modelsData?.errors.map((e) => (
+              {(modelsData?.errors ?? []).map((e) => (
                 <div key={e.provider} className="meta">{e.provider}: {e.message}</div>
               ))}
               {(["openai", "nebius"] as LlmProvider[]).map((provider) => {
