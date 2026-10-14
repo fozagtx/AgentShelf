@@ -24,8 +24,8 @@ then run `/paypal:doctor` to verify the setup.
 `render.yaml` deploys the `agentshelf` web service and `agentshelf-workflows`.
 Set secrets once on the web service (`sync: false`); the workflow service
 inherits them via `fromService`. The app URL comes from `RENDER_EXTERNAL_URL`/
-`APP_HOST` automatically — no hard-coded URL. Also set `ASTRO_GATEWAY_URL`
-to the Astropods gateway base URL (the code appends `/v1`).
+`APP_HOST` automatically — no hard-coded URL. Set `OPENAI_API_KEY` and/or
+`NEBIUS_API_KEY` for the shopper models (at least one is required).
 
 ## Testing and building
 

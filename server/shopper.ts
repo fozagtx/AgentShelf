@@ -20,7 +20,7 @@ import {
   RUNS_TABLE,
 } from "./db.js";
 import { writeEvent } from "./events.js";
-import { gateway } from "./gateway.js";
+import { llm, missingLlmCredentials, type Provider } from "./llm.js";
 
 export interface RunSpec {
   id: string;
@@ -28,7 +28,7 @@ export interface RunSpec {
   productId: string;
   query: string;
   model: string;
-  provider: string;
+  provider: Provider;
   variant: "original" | "fixed";
   rep: number;
   competitors: Array<Record<string, any>>;
@@ -274,7 +274,7 @@ export function formatShopperActionDetail(
 export function missingShopperCredentials() {
   return [
     ...(!process.env.KERNEL_API_KEY ? ["KERNEL_API_KEY"] : []),
-    ...(!process.env.ASTRO_GATEWAY_API_KEY ? ["ASTRO_GATEWAY_API_KEY"] : []),
+    ...missingLlmCredentials(),
   ];
 }
 
@@ -354,7 +354,7 @@ export async function runShopper(db: Db, spec: RunSpec) {
       },
       { role: "user", content: prompt },
     ];
-    const ai = gateway();
+    const ai = llm(spec.provider);
     const deadline = Date.now() + SHOPPER_TIMEOUT_MS;
     let previousToolMessages: ChatCompletionMessageParam[] = [];
     let actionCount = 0;
@@ -371,16 +371,31 @@ export async function runShopper(db: Db, spec: RunSpec) {
       ];
       const remainingMs = deadline - Date.now();
       if (remainingMs <= 0) break;
-      const completion = await ai.chat.completions.create({
-        model: spec.model,
-        messages,
-        tools: SHOPPER_TOOLS,
-        tool_choice: "required",
-      }, { timeout: remainingMs });
-      const assistantMessage = completion.choices[0]?.message;
+      const requestCompletion = () =>
+        ai.chat.completions.create({
+          model: spec.model,
+          messages,
+          tools: SHOPPER_TOOLS,
+          // Nebius only supports "auto" or a named function, not "required".
+          tool_choice: spec.provider === "nebius" ? "auto" : "required",
+        }, { timeout: remainingMs });
+      let completion = await requestCompletion();
+      let assistantMessage = completion.choices[0]?.message;
       if (!assistantMessage) throw new Error("Shopper model returned no message.");
+      let calls = assistantMessage.tool_calls ?? [];
+      if (!calls.length && spec.provider === "nebius") {
+        // Nebius can answer without a tool call under "auto"; nudge once.
+        lastAgentMessage = assistantMessage.content ?? "";
+        messages.push(assistantMessage, {
+          role: "user",
+          content: "You must respond with exactly one browser tool call.",
+        });
+        completion = await requestCompletion();
+        assistantMessage = completion.choices[0]?.message;
+        if (!assistantMessage) throw new Error("Shopper model returned no message.");
+        calls = assistantMessage.tool_calls ?? [];
+      }
       lastAgentMessage = assistantMessage.content ?? "";
-      const calls = assistantMessage.tool_calls ?? [];
       if (!calls.length) {
         finalText = assistantMessage.content ?? "";
         throw new Error("Shopper model did not return a required tool call.");

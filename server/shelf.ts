@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { Provider } from "./llm.js";
 import type { Product } from "./products.js";
 
 export interface ShelfEntry {
@@ -31,7 +32,7 @@ export function shuffleShelf(
 export function buildRunSpecs(
   experiment: { id: string; query: string; reps?: number; competitors?: Array<Record<string, any>> },
   product: Product | Record<string, any>,
-  models: ReadonlyArray<string>,
+  models: ReadonlyArray<{ id: string; provider: Provider }>,
   reps: number,
 ) {
   const variants: Array<"original" | "fixed"> = product.fixed_variant
@@ -47,8 +48,8 @@ export function buildRunSpecs(
           experimentId: experiment.id,
           productId: String(product.id),
           query: experiment.query,
-          model,
-          provider: "Astropods",
+          model: model.id,
+          provider: model.provider,
           variant,
           rep,
           competitors: experiment.competitors ?? [],

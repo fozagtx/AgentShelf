@@ -68,7 +68,7 @@ function toChatMessages(request: AgLlmRequest) {
   return messages;
 }
 
-export function toChatPayload(request: AgLlmRequest, fallbackModel: string) {
+export function toChatPayload(request: AgLlmRequest, fallbackModel?: string) {
   const toolChoice = request.toolChoice;
   const tools = request.tools?.map((tool) => ({
     type: "function" as const,
@@ -92,8 +92,9 @@ export function toChatPayload(request: AgLlmRequest, fallbackModel: string) {
       }
     : undefined;
 
+  const model = request.model?.id ?? fallbackModel;
   return {
-    model: request.model?.id ?? fallbackModel,
+    ...(model ? { model } : {}),
     messages: toChatMessages(request),
     ...(tools?.length ? { tools } : {}),
     ...(toolChoice
@@ -168,7 +169,7 @@ async function* responseEvents(response: AgLlmResponse): AsyncGenerator<AgAiEven
   }
 }
 
-export function createGatewayAdapter(defaultModel = "gpt-5-6-terra"): AgLlmAdapter {
+export function createGatewayAdapter(defaultModel?: string): AgLlmAdapter {
   return {
     executeTurn(request, options) {
       const payload = toChatPayload(request, defaultModel);

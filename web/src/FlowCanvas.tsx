@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import type { Analytics, Experiment, RunRow } from "./api";
+import type { LiveRun } from "./LiveShoppers";
 import { EASE } from "./motion";
 
 type State = "done" | "running" | "waiting" | "failed";
@@ -126,7 +127,7 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-export function FlowCanvas({ exp, stats, runs, checkoutExtra, initial }: { exp: Experiment; stats: Analytics; runs: RunRow[]; checkoutExtra?: ReactNode; initial?: NodeId }) {
+export function FlowCanvas({ exp, stats, runs, checkoutExtra, live, initial }: { exp: Experiment; stats: Analytics; runs: RunRow[]; checkoutExtra?: ReactNode; live?: LiveRun[]; initial?: NodeId }) {
   const d = useMemo(() => {
     const models = new Map<string, { total: number; finished: number; failed: number }>();
     const variants = new Map<string, { total: number; finished: number }>();
@@ -166,6 +167,20 @@ export function FlowCanvas({ exp, stats, runs, checkoutExtra, initial }: { exp: 
   const [selected, setSelected] = useState<NodeId | null>(initial ?? null);
   const active: NodeId | null = selected;
 
+  const runningLive = useMemo(() => (live ?? []).filter((r) => r.status === "running"), [live]);
+  const liveBrowsers = useMemo(() => runningLive.filter((r) => r.liveViewUrl), [runningLive]);
+  const replays = useMemo(() => (live ?? []).filter((r) => r.status !== "running" && r.replayUrl), [live]);
+  const providerFor = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const m of exp.models ?? []) if (m.provider) map.set(m.id, m.provider);
+    for (const r of runs) {
+      const model = String(r.model ?? "");
+      const provider = String(r.provider ?? "");
+      if (model && provider && !map.has(model)) map.set(model, provider);
+    }
+    return (model: string) => map.get(model);
+  }, [exp.models, runs]);
+
   const wrapRef = useRef<HTMLDivElement>(null);
   const [fit, setFit] = useState(1);
   const [zoomStep, setZoomStep] = useState(0);
@@ -180,12 +195,15 @@ export function FlowCanvas({ exp, stats, runs, checkoutExtra, initial }: { exp: 
 
   const topBreak = stats.takeaway.topBreak?.stage;
   const product = exp.merchant_product;
-  const modelRows: Row[] = [...d.models].map(([model, m]) => ({
-    key: model,
-    label: model,
-    value: `${m.finished}/${m.total}`,
-    state: m.finished < m.total ? "running" : m.failed === m.total ? "failed" : "done",
-  }));
+  const modelRows: Row[] = [...d.models].map(([model, m]) => {
+    const provider = providerFor(model);
+    return {
+      key: model,
+      label: <>{model}{provider && <span className="meta"> · {provider}</span>}</>,
+      value: `${m.finished}/${m.total}`,
+      state: (m.finished < m.total ? "running" : m.failed === m.total ? "failed" : "done") as State,
+    };
+  });
   const checkoutRows: Row[] = CHECKOUT_STAGES.map((key) => {
     const count = d.stage(key);
     return {
@@ -242,6 +260,15 @@ export function FlowCanvas({ exp, stats, runs, checkoutExtra, initial }: { exp: 
             <div className="node-panel">
               <div className="node-panel-title">Runs by model</div>
               {modelRows.length ? <Rows rows={modelRows} /> : <div className="node-more">The fleet starts once the shelf is ready</div>}
+              {runningLive.length > 0 && (
+                <ul className="node-rows">
+                  <li>
+                    <span className="node-row-label"><span className="live-dot" aria-hidden />Live browsers</span>
+                    <span className="node-row-value">{runningLive.length}</span>
+                    <Mark state="running" />
+                  </li>
+                </ul>
+              )}
             </div>
           </Node>
           <Wire dir="v" area="w3" state={checkoutState} delay={0.55} />
@@ -325,7 +352,37 @@ export function FlowCanvas({ exp, stats, runs, checkoutExtra, initial }: { exp: 
                   <Field label="Runs per model and listing">{exp.reps}</Field>
                   <Field label="Progress">{exp.run_counts ? `${exp.run_counts.done} of ${exp.run_counts.total} runs finished` : `${d.finished} of ${runs.length} runs finished`}</Field>
                   <Field label="Models">{modelRows.length ? <Rows rows={modelRows} /> : "Not started"}</Field>
-                  <a className="side-link" href="#live">Watch the shoppers live</a>
+                  <Field label={`Live browsers${liveBrowsers.length ? ` (${liveBrowsers.length})` : ""}`}>
+                    {liveBrowsers.length ? (
+                      <div className="live-canvas">
+                        {liveBrowsers.map((r) => (
+                          <figure key={r.runId} className="live-card">
+                            <div className="live-screen">
+                              <iframe src={r.liveViewUrl} allow="autoplay; clipboard-read; clipboard-write" title={`${r.model} live browser`} />
+                            </div>
+                            <figcaption>
+                              <span className="live-cap"><span className="live-dot" aria-hidden />{r.model} · {r.variant} · run {r.rep}</span>
+                              {r.steps.length > 0 && <span className="meta">{r.steps[r.steps.length - 1].detail}</span>}
+                            </figcaption>
+                          </figure>
+                        ))}
+                      </div>
+                    ) : (
+                      <>
+                        <div className="meta">No browsers running right now. Live views appear here while shoppers run.</div>
+                        {replays.length > 0 && (
+                          <ul className="plist">
+                            {replays.slice(0, 5).map((r) => (
+                              <li key={r.runId}>
+                                <a href={r.replayUrl} target="_blank" rel="noreferrer">Watch replay</a>
+                                <span>{r.model} · {r.variant} · run {r.rep}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </>
+                    )}
+                  </Field>
                 </>
               )}
               {active === "checkout" && (

@@ -1,5 +1,4 @@
-import { FIX_MODEL } from "./config.js";
-import { gateway, hasGateway } from "./gateway.js";
+import { llm, missingLlmCredentials, type ModelOption } from "./llm.js";
 
 export interface ProductFix {
   fixed: {
@@ -11,20 +10,20 @@ export interface ProductFix {
 }
 
 export function missingGatewayCredentials() {
-  return (["ASTRO_GATEWAY_API_KEY", "ASTRO_GATEWAY_URL"] as const)
-    .filter((key) => !process.env[key]);
+  return missingLlmCredentials();
 }
 
 export async function generateProductFix(
   product: Record<string, any>,
   competitors: unknown[],
+  model: ModelOption,
 ): Promise<ProductFix> {
-  const missing = missingGatewayCredentials();
+  const missing = missingLlmCredentials();
   if (missing.length) {
     throw new Error(`Product copy fixes are unavailable. Missing environment variables: ${missing.join(", ")}.`);
   }
-  const result = await gateway().chat.completions.create({
-    model: FIX_MODEL,
+  const result = await llm(model.provider).chat.completions.create({
+    model: model.id,
     response_format: { type: "json_object" },
     messages: [
       {
@@ -50,12 +49,12 @@ export async function generateProductFix(
     ],
   });
   const content = result.choices[0]?.message.content;
-  if (!content) throw new Error("Astropods gateway returned no product copy.");
+  if (!content) throw new Error("The model returned no product copy.");
   let parsed: unknown;
   try {
     parsed = JSON.parse(content);
   } catch {
-    throw new Error("Astropods gateway returned invalid JSON product copy.");
+    throw new Error("The model returned invalid JSON product copy.");
   }
   if (
     typeof parsed !== "object" ||
@@ -73,14 +72,14 @@ export async function generateProductFix(
     !Array.isArray(parsed.rationale) ||
     !parsed.rationale.every((item) => typeof item === "string")
   ) {
-    throw new Error("Astropods gateway returned invalid product copy.");
+    throw new Error("The model returned invalid product copy.");
   }
   if (
     !parsed.fixed.title.trim() ||
     parsed.fixed.description.trim().length < 25 ||
     !parsed.fixed.key_features.every((feature) => typeof feature === "string" && feature.trim())
   ) {
-    throw new Error("Astropods gateway product copy did not satisfy PayPal catalog requirements.");
+    throw new Error("The model's product copy did not satisfy PayPal catalog requirements.");
   }
   return parsed as ProductFix;
 }

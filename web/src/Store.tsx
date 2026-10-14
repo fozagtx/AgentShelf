@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, type Channel3Hit, type Product } from "./api";
+import { api, type Channel3Hit, type Models, type Product } from "./api";
 import { AsciiImage } from "./Ascii";
 import { Item, Stagger, hoverCard } from "./motion";
 
@@ -14,6 +14,8 @@ export function Store() {
   const [lookup, setLookup] = useState("");
   const [hits, setHits] = useState<Channel3Hit[] | null>(null);
   const [importing, setImporting] = useState("");
+  const [modelsData, setModelsData] = useState<Models | null>(null);
+  const [fixModel, setFixModel] = useState("");
 
   async function findOnChannel3(e: React.FormEvent) {
     e.preventDefault();
@@ -52,7 +54,11 @@ export function Store() {
   }
 
   const load = () => api.products().then(setProducts).catch((e) => { setProducts([]); setError(e.message); });
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+    api.models().then(setModelsData).catch(() =>
+      setModelsData({ models: [], errors: [], providers: { openai: false, nebius: false } }));
+  }, []);
 
   async function publish(e: React.FormEvent) {
     e.preventDefault();
@@ -71,7 +77,8 @@ export function Store() {
     setFixing(id);
     setError("");
     try {
-      await api.fix(id);
+      const option = (modelsData?.models ?? []).find((m) => `${m.provider}:${m.id}` === fixModel);
+      await api.fix(id, option ? { id: option.id, provider: option.provider } : undefined);
       load();
     } catch (err) {
       setError((err as Error).message);
@@ -93,6 +100,18 @@ export function Store() {
       <div className="row">
         <a className="btn ghost" href="/feed.csv" target="_blank" rel="noreferrer">Product feed</a>
         <a className="btn ghost" href="/.well-known/jwks.json" target="_blank" rel="noreferrer">JWKS</a>
+        <select
+          className="fix-model"
+          aria-label="Model for AI copy fixes"
+          value={fixModel}
+          onChange={(e) => setFixModel(e.target.value)}
+          disabled={!modelsData?.models.length}
+        >
+          {modelsData?.models.length
+            ? <><option value="">Fix model (auto)</option>
+                {modelsData.models.map((m) => <option key={`${m.provider}:${m.id}`} value={`${m.provider}:${m.id}`}>{m.label} · {m.provider}</option>)}</>
+            : <option value="">Add OPENAI_API_KEY or NEBIUS_API_KEY</option>}
+        </select>
       </div>
       <div className="gap-xl" />
 

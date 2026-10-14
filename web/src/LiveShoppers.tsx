@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { AnimatePresence } from "motion/react";
 import { Item, Stagger, hoverCard } from "./motion";
 
-type Step = { step: number; action: string; detail: string; ok: boolean; ts: string };
-type LiveRun = {
+export type LiveStep = { step: number; action: string; detail: string; ok: boolean; ts: string };
+export type LiveRun = {
   runId: string;
   model: string;
   variant: string;
@@ -12,28 +12,12 @@ type LiveRun = {
   liveViewUrl?: string;
   replayUrl?: string;
   furthestStage?: string;
-  steps: Step[];
+  steps: LiveStep[];
 };
 
 const verbs: Record<string, string> = { click: "Clicked", type: "Typed", select: "Chose", back: "Went back", done: "Finished" };
 
-function Feed({ steps }: { steps: Step[] }) {
-  const ref = useRef<HTMLOListElement>(null);
-  useEffect(() => { ref.current?.scrollTo({ top: ref.current.scrollHeight, behavior: "smooth" }); }, [steps.length]);
-  if (steps.length === 0) return <div className="feed-empty meta">Waiting for the first move</div>;
-  return (
-    <ol className="feed" ref={ref}>
-      {steps.map((s) => (
-        <li key={s.step} className={s.ok ? "" : "bad"}>
-          <span className="feed-n">{String(s.step).padStart(2, "0")}</span>
-          <span><b>{verbs[s.action] ?? s.action}</b> {s.detail}</span>
-        </li>
-      ))}
-    </ol>
-  );
-}
-
-export function LiveShoppers({ id }: { id: string }) {
+export function useLiveRuns(id: string) {
   const [runs, setRuns] = useState<LiveRun[] | null>(null);
 
   useEffect(() => {
@@ -55,6 +39,29 @@ export function LiveShoppers({ id }: { id: string }) {
     return () => { alive = false; clearTimeout(timer); };
   }, [id]);
 
+  return runs;
+}
+
+function Feed({ steps }: { steps: LiveStep[] }) {
+  const ref = useRef<HTMLOListElement>(null);
+  useEffect(() => { ref.current?.scrollTo({ top: ref.current.scrollHeight, behavior: "smooth" }); }, [steps.length]);
+  if (steps.length === 0) return <div className="feed-empty meta">Waiting for the first move</div>;
+  return (
+    <ol className="feed" ref={ref}>
+      {steps.map((s) => (
+        <li key={s.step} className={s.ok ? "" : "bad"}>
+          <span className="feed-n">{String(s.step).padStart(2, "0")}</span>
+          <span><b>{verbs[s.action] ?? s.action}</b> {s.detail}</span>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+export function LiveShoppers({ id, runs: liveRuns }: { id: string; runs?: LiveRun[] | null }) {
+  const polled = useLiveRuns(id);
+  const runs = liveRuns ?? polled;
+
   if (!runs || runs.length === 0) return <div className="card empty">Shoppers appear here as soon as the fleet starts.</div>;
 
   return (
@@ -71,7 +78,7 @@ export function LiveShoppers({ id }: { id: string }) {
           </div>
           <div className="screen">
             {r.status === "running" && r.liveViewUrl ? (
-              <iframe src={r.liveViewUrl} title={`${r.model} browser`} allow="clipboard-read; clipboard-write" />
+              <iframe src={r.liveViewUrl} title={`${r.model} browser`} allow="autoplay; clipboard-read; clipboard-write" />
             ) : r.replayUrl ? (
               <a className="btn ghost" href={r.replayUrl} target="_blank" rel="noreferrer">Watch replay <span className="arrow">→</span></a>
             ) : (

@@ -37,21 +37,26 @@ describe("shopper tool helpers", () => {
     ]);
   });
 
-  it("requires KERNEL and gateway credentials", () => {
+  it("requires KERNEL and LLM provider credentials", () => {
     const kernelKey = process.env.KERNEL_API_KEY;
-    const gatewayKey = process.env.ASTRO_GATEWAY_API_KEY;
+    const openAiKey = process.env.OPENAI_API_KEY;
+    const nebiusKey = process.env.NEBIUS_API_KEY;
     delete process.env.KERNEL_API_KEY;
-    delete process.env.ASTRO_GATEWAY_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    delete process.env.NEBIUS_API_KEY;
     try {
       expect(missingShopperCredentials()).toEqual([
         "KERNEL_API_KEY",
-        "ASTRO_GATEWAY_API_KEY",
+        "OPENAI_API_KEY",
+        "NEBIUS_API_KEY",
       ]);
     } finally {
       if (kernelKey) process.env.KERNEL_API_KEY = kernelKey;
       else delete process.env.KERNEL_API_KEY;
-      if (gatewayKey) process.env.ASTRO_GATEWAY_API_KEY = gatewayKey;
-      else delete process.env.ASTRO_GATEWAY_API_KEY;
+      if (openAiKey) process.env.OPENAI_API_KEY = openAiKey;
+      else delete process.env.OPENAI_API_KEY;
+      if (nebiusKey) process.env.NEBIUS_API_KEY = nebiusKey;
+      else delete process.env.NEBIUS_API_KEY;
     }
   });
 

@@ -25,9 +25,9 @@ services:
         sync: false
       - key: KERNEL_API_KEY
         sync: false
-      - key: ASTRO_GATEWAY_API_KEY
+      - key: OPENAI_API_KEY
         sync: false
-      - key: ASTRO_GATEWAY_URL
+      - key: NEBIUS_API_KEY
         sync: false
       - key: DATABASE_URL
         fromDatabase:
@@ -75,16 +75,16 @@ services:
           type: web
           name: agentshelf
           envVarKey: KERNEL_API_KEY
-      - key: ASTRO_GATEWAY_API_KEY
+      - key: OPENAI_API_KEY
         fromService:
           type: web
           name: agentshelf
-          envVarKey: ASTRO_GATEWAY_API_KEY
-      - key: ASTRO_GATEWAY_URL
+          envVarKey: OPENAI_API_KEY
+      - key: NEBIUS_API_KEY
         fromService:
           type: web
           name: agentshelf
-          envVarKey: ASTRO_GATEWAY_URL
+          envVarKey: NEBIUS_API_KEY
       - key: RENDER_API_KEY
         fromService:
           type: web
