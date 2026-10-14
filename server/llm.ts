@@ -98,7 +98,7 @@ async function listNebiusModels(apiKey: string): Promise<ModelOption[]> {
   });
   const payload = await response.json().catch(() => ({})) as Record<string, any>;
   if (!response.ok) {
-    throw new Error(String(payload.error?.message ?? payload.message ?? `Nebius model list failed (${response.status}).`));
+    throw new Error(String(payload.error?.message ?? payload.detail ?? payload.message ?? `Nebius model list failed (${response.status}).`));
   }
   const entries: Record<string, any>[] = Array.isArray(payload)
     ? payload

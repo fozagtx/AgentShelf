@@ -349,9 +349,6 @@ export function FlowCanvas({ exp, stats, runs, checkoutExtra, live, initial }: {
               )}
               {active === "fleet" && (
                 <>
-                  <Field label="Runs per model and listing">{exp.reps}</Field>
-                  <Field label="Progress">{exp.run_counts ? `${exp.run_counts.done} of ${exp.run_counts.total} runs finished` : `${d.finished} of ${runs.length} runs finished`}</Field>
-                  <Field label="Models">{modelRows.length ? <Rows rows={modelRows} /> : "Not started"}</Field>
                   <Field label={`Live browsers${liveBrowsers.length ? ` (${liveBrowsers.length})` : ""}`}>
                     {liveBrowsers.length ? (
                       <div className="live-canvas">
@@ -383,6 +380,9 @@ export function FlowCanvas({ exp, stats, runs, checkoutExtra, live, initial }: {
                       </>
                     )}
                   </Field>
+                  <Field label="Runs per model and listing">{exp.reps}</Field>
+                  <Field label="Progress">{exp.run_counts ? `${exp.run_counts.done} of ${exp.run_counts.total} runs finished` : `${d.finished} of ${runs.length} runs finished`}</Field>
+                  <Field label="Models">{modelRows.length ? <Rows rows={modelRows} /> : "Not started"}</Field>
                 </>
               )}
               {active === "checkout" && (

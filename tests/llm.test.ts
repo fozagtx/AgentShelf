@@ -103,11 +103,11 @@ describe("listModels", () => {
 
   it("captures a provider failure without throwing", async () => {
     const restore = stubEnv({ NEBIUS_API_KEY: "test-key-nebius-2", OPENAI_API_KEY: undefined });
-    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({ error: { message: "bad key" } }, 401)));
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({ detail: "Invalid token" }, 401)));
     try {
       const { models, errors } = await listModels();
       expect(models).toEqual([]);
-      expect(errors).toEqual([{ provider: "nebius", message: "bad key" }]);
+      expect(errors).toEqual([{ provider: "nebius", message: "Invalid token" }]);
     } finally {
       restore();
     }
