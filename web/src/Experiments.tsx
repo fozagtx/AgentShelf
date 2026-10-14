@@ -92,6 +92,7 @@ export function Experiments() {
     } catch (err) {
       setError((err as Error).message);
       setBusy(false);
+      requestAnimationFrame(() => document.getElementById("run-error")?.scrollIntoView({ block: "nearest" }));
     }
   }
 
@@ -262,9 +263,9 @@ export function Experiments() {
               <div className="meta">Set these once on the agentshelf web service in Render, then redeploy.</div>
             </div>
           )}
-          {error && <div className="notice">{error}</div>}
           <button className="btn red dash-go" disabled={runDisabled}>{busy ? "Starting fleet" : "Run the fleet"}</button>
           {runReason && <div className="meta">{runReason}</div>}
+          {error && <div className="notice" id="run-error">{error}</div>}
         </form>
 
         <div className="dash-tools">
