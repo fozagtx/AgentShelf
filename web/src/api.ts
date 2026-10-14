@@ -35,6 +35,7 @@ export interface Product {
   image_url: string;
   inventory: number;
   category: string;
+  channel3_id?: string;
   key_features: string[];
   fixed_variant?: { title: string; description: string; key_features: string[]; rationale: string[] };
 }

@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { motion } from "motion/react";
 import { api, type Experiment, type LlmProvider, type Models, type PayPalMcpTools, type Product } from "./api";
 import { Link, navigate } from "./router";
+import { ProductPicker } from "./ProductPicker";
 import { EASE } from "./motion";
 import { useCrumb } from "./Shell";
 
@@ -168,11 +169,13 @@ export function Experiments() {
         </ol>
         <form className="side-body" onSubmit={start}>
           <div className="field">
-            <label htmlFor="product">Your product*</label>
-            <select id="product" value={productId} onChange={(e) => setProductId(e.target.value)} required>
-              {products.length === 0 && <option value="">Publish a product in Store first</option>}
-              {products.map((p) => <option key={p.id} value={p.id}>{p.title}</option>)}
-            </select>
+            <label id="product-label">Your product*</label>
+            <ProductPicker
+              products={products}
+              value={productId}
+              onChange={setProductId}
+              onImported={(p) => setProducts((current) => [p, ...current])}
+            />
           </div>
           <div className="field">
             <label htmlFor="query">Shopper intent*</label>
