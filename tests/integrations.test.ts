@@ -11,8 +11,12 @@ import { callPayPalMcp, listPayPalMcpTools } from "../server/paypalMcp.js";
 const paypalEnabled = Boolean(
   process.env.PAYPAL_CLIENT_ID && process.env.PAYPAL_CLIENT_SECRET,
 );
-const gatewayEnabled = Boolean(process.env.ASTRO_GATEWAY_API_KEY);
-const kernelEnabled = Boolean(process.env.KERNEL_API_KEY && process.env.ASTRO_GATEWAY_API_KEY);
+const gatewayEnabled = Boolean(
+  process.env.ASTRO_GATEWAY_API_KEY && process.env.ASTRO_GATEWAY_URL,
+);
+const kernelEnabled = Boolean(
+  process.env.KERNEL_API_KEY && process.env.ASTRO_GATEWAY_API_KEY && process.env.ASTRO_GATEWAY_URL,
+);
 
 describe("live Astropods AI gateway", () => {
   it.skipIf(!gatewayEnabled)("returns a required tool call from each shopper model", async () => {

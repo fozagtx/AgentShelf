@@ -78,7 +78,7 @@ export async function createApp(options: AppOptions = {}) {
       return c.json({ error: "The requested model is not in the configured fleet." }, 400);
     }
     if (!hasGateway()) {
-      return c.json({ error: "ASTRO_GATEWAY_API_KEY is not set" }, 503);
+      return c.json({ error: "ASTRO_GATEWAY_API_KEY and ASTRO_GATEWAY_URL are not set" }, 503);
     }
     const requestedTokens = Number(input.max_tokens);
     const maxTokens = Number.isFinite(requestedTokens)

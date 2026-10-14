@@ -27,6 +27,8 @@ services:
         sync: false
       - key: ASTRO_GATEWAY_API_KEY
         sync: false
+      - key: ASTRO_GATEWAY_URL
+        sync: false
       - key: DATABASE_URL
         fromDatabase:
           name: agentshelf-db
@@ -42,23 +44,58 @@ services:
     buildCommand: npm ci && npm run build:server
     startCommand: npm run start:workflows
     envVars:
+      # Secrets are set once on the web service; workflows inherit them.
       - key: PAYPAL_CLIENT_ID
-        sync: false
+        fromService:
+          type: web
+          name: agentshelf
+          envVarKey: PAYPAL_CLIENT_ID
       - key: PAYPAL_CLIENT_SECRET
-        sync: false
+        fromService:
+          type: web
+          name: agentshelf
+          envVarKey: PAYPAL_CLIENT_SECRET
       - key: PAYPAL_SANDBOX_BUYER_EMAIL
-        sync: false
+        fromService:
+          type: web
+          name: agentshelf
+          envVarKey: PAYPAL_SANDBOX_BUYER_EMAIL
       - key: PAYPAL_SANDBOX_BUYER_PASSWORD
-        sync: false
+        fromService:
+          type: web
+          name: agentshelf
+          envVarKey: PAYPAL_SANDBOX_BUYER_PASSWORD
       - key: CHANNEL3_API_KEY
-        sync: false
+        fromService:
+          type: web
+          name: agentshelf
+          envVarKey: CHANNEL3_API_KEY
       - key: KERNEL_API_KEY
-        sync: false
+        fromService:
+          type: web
+          name: agentshelf
+          envVarKey: KERNEL_API_KEY
       - key: ASTRO_GATEWAY_API_KEY
-        sync: false
+        fromService:
+          type: web
+          name: agentshelf
+          envVarKey: ASTRO_GATEWAY_API_KEY
+      - key: ASTRO_GATEWAY_URL
+        fromService:
+          type: web
+          name: agentshelf
+          envVarKey: ASTRO_GATEWAY_URL
+      - key: RENDER_API_KEY
+        fromService:
+          type: web
+          name: agentshelf
+          envVarKey: RENDER_API_KEY
+      - key: APP_HOST
+        fromService:
+          type: web
+          name: agentshelf
+          envVarKey: RENDER_EXTERNAL_HOSTNAME
       - key: DATABASE_URL
         fromDatabase:
           name: agentshelf-db
           property: connectionString
-      - key: RENDER_API_KEY
-        sync: false
