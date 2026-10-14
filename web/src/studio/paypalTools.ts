@@ -3,6 +3,10 @@ export interface PayPalListTransactionsArgs {
   end_date?: string;
 }
 
+export interface PayPalListDisputesArgs {
+  dispute_state?: string;
+}
+
 export function createPayPalTools(studioApi: any) {
   return [
     studioApi.defineAiTool({
@@ -29,6 +33,19 @@ export function createPayPalTools(studioApi: any) {
       }),
       execute: async (args: PayPalListTransactionsArgs, ctx: any) => {
         const result = await callPayPalMcp("list_transactions", { ...args });
+        return ctx.success(JSON.stringify(result), { result });
+      },
+    }),
+    studioApi.defineAiTool({
+      name: "paypal_list_disputes",
+      description: "List PayPal disputes, optionally filtered by dispute state.",
+      params: (s: any) => s.object({
+        dispute_state: s.string({
+          description: "Optional dispute state filter, e.g. OPEN_INQUIRIES.",
+        }).optional(),
+      }),
+      execute: async (args: PayPalListDisputesArgs, ctx: any) => {
+        const result = await callPayPalMcp("list_disputes", { ...args });
         return ctx.success(JSON.stringify(result), { result });
       },
     }),

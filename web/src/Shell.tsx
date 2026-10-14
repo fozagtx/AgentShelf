@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { Link } from "./router";
+import { api } from "./api";
 
 export type Crumb = { title: string; status: string } | null;
 const CrumbContext = createContext<(c: Crumb) => void>(() => {});
@@ -30,17 +31,20 @@ function RailLink({ to, label, on, icon }: { to: string; label: string; on: bool
 
 export function Shell({ path, children }: { path: string; children: ReactNode }) {
   const [crumb, setCrumb] = useState<Crumb>(null);
+  const [paypalOn, setPaypalOn] = useState<boolean | null>(null);
+  useEffect(() => { api.status().then((s) => setPaypalOn(s.paypal)).catch(() => setPaypalOn(false)); }, []);
   const isExp = path.startsWith("/app/experiments/");
+  const isDash = path === "/app" || path === "/app/";
   const inStore = path.startsWith("/app/store");
   const section = inStore ? "Store" : "Experiments";
-  const statusClass = crumb?.status === "complete" ? "ok" : crumb?.status === "failed" ? "bad" : "live";
+  const statusClass = crumb?.status === "complete" ? "ok" : crumb?.status === "failed" ? "bad" : crumb?.status === "draft" ? "draft" : "live";
 
   return (
     <CrumbContext.Provider value={setCrumb}>
       <div className="app">
         <aside className="rail">
           <Link to="/" className="rail-brand" aria-label="AgentShelf home">
-            <svg width="16" height="16" viewBox="0 0 32 32" aria-hidden><path d="M6 22h20M6 15h20M10 8h12" stroke="#fff" strokeWidth="3.4" strokeLinecap="round" /></svg>
+            <i className="rail-diamond" aria-hidden />
           </Link>
           <nav className="rail-nav" aria-label="App">
             <RailLink to="/app" label="Experiments" on={!inStore} icon={railIcon.experiments} />
@@ -52,11 +56,11 @@ export function Shell({ path, children }: { path: string; children: ReactNode })
         </aside>
         <div className="app-main">
           <header className="bar">
-            <Link to="/" className="bar-brand">AgentShelf</Link>
+            <Link to="/" className="bar-brand"><span className="x-mark"><i /></span>AgentShelf</Link>
             <div className="crumbs">
               <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" aria-hidden><path d="M3.5 7a1.5 1.5 0 0 1 1.5-1.5h4l2 2h8a1.5 1.5 0 0 1 1.5 1.5v8.5a1.5 1.5 0 0 1-1.5 1.5H5a1.5 1.5 0 0 1-1.5-1.5Z" /></svg>
               <Link to={inStore ? "/app/store" : "/app"} className="crumb-root">{section}</Link>
-              {isExp && crumb && (
+              {crumb && (
                 <>
                   <span className="crumb-sep">/</span>
                   <span className="crumb-title" title={crumb.title}>{crumb.title}</span>
@@ -64,9 +68,12 @@ export function Shell({ path, children }: { path: string; children: ReactNode })
                 </>
               )}
             </div>
-            <Link to="/app" className="bar-cta">Run a test</Link>
+            <div className="bar-tools">
+              <span className="bar-chip" title={paypalOn ? "PayPal sandbox credentials configured" : "PayPal sandbox credentials missing"}><img src="/logos/paypal.png" alt="" />PayPal sandbox<i className={`bar-dot ${paypalOn ? "on" : "off"}`} aria-hidden /></span>
+              <Link to="/app" className="bar-cta">Run a test</Link>
+            </div>
           </header>
-          <main className={`page${isExp ? " wide" : ""}`} key={path}>{children}</main>
+          <main className={`page${isExp || isDash ? " wide" : ""}${isDash ? " dash-page" : ""}`} key={path}>{children}</main>
         </div>
       </div>
     </CrumbContext.Provider>

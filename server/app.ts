@@ -7,6 +7,7 @@ import {
   configuredIntegrations,
   DEFAULT_REPS,
   MODEL_FLEET,
+  PAYPAL_MCP_URL,
   PRODUCT_FIX_MODEL,
 } from "./config.js";
 import {
@@ -37,6 +38,8 @@ import { missingPayPalCredentials } from "./paypal.js";
 import {
   callPayPalMcp,
   isAllowedPayPalMcpTool,
+  listPayPalMcpTools,
+  PAYPAL_MCP_TOOL_NAMES,
 } from "./paypalMcp.js";
 
 export interface AppOptions {
@@ -99,6 +102,31 @@ export async function createApp(options: AppOptions = {}) {
       return c.json({
         error: error instanceof Error ? error.message : "Astropods chat request failed.",
       }, 502);
+    }
+  });
+
+  app.get("/api/paypal-mcp/tools", async (c) => {
+    const fallbackTools = PAYPAL_MCP_TOOL_NAMES.map((name) => ({ name }));
+    if (missingPayPalCredentials().length) {
+      return c.json({ connected: false, server: PAYPAL_MCP_URL, tools: fallbackTools });
+    }
+    try {
+      const tools = await listPayPalMcpTools();
+      return c.json({
+        connected: true,
+        server: PAYPAL_MCP_URL,
+        tools: tools.map((tool) => ({
+          name: tool.name,
+          description: tool.description ?? "",
+        })),
+      });
+    } catch (error) {
+      return c.json({
+        connected: false,
+        server: PAYPAL_MCP_URL,
+        error: error instanceof Error ? error.message : "PayPal MCP request failed.",
+        tools: fallbackTools,
+      });
     }
   });
 

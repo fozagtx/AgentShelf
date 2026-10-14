@@ -344,6 +344,7 @@ async function readBody(c: { req: { json: () => Promise<unknown> } }) {
 
 function paypalFailure(c: { json: (body: unknown, status: number) => Response }, error: unknown) {
   if (error instanceof PayPalApiError) {
+    console.error(`PayPal API request failed: ${error.message}`);
     const description = error.plainReason;
     if (error.status === 422) {
       return c.json({

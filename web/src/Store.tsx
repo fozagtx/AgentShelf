@@ -85,11 +85,12 @@ export function Store() {
 
   return (
     <div className="enter">
-      <section className="hero">
-      <h1 className="display">Your store, ready for agents</h1>
-      <p className="lede">Every product here is served on the PayPal Store Sync cart API and in your product feed.</p>
+      <section className="dash-head">
+        <span className="x-badge"><i />Store</span>
+        <h1 className="display">Your store, ready for agents</h1>
+        <p className="lede">Every product here is served on the PayPal Store Sync cart API and in your product feed.</p>
       </section>
-      <div className="row" style={{ marginTop: 18, justifyContent: "center" }}>
+      <div className="row">
         <a className="btn ghost" href="/feed.csv" target="_blank" rel="noreferrer">Product feed</a>
         <a className="btn ghost" href="/.well-known/jwks.json" target="_blank" rel="noreferrer">JWKS</a>
       </div>
@@ -131,6 +132,8 @@ export function Store() {
       </Stagger>
 
       <div className="gap-xl" />
+      <span className="x-badge"><i />Channel3</span>
+      <div style={{ height: 12 }} />
       <h2 className="section">Import from Channel3</h2>
       <div style={{ height: 16 }} />
       <form className="card form" onSubmit={findOnChannel3}>
@@ -163,6 +166,8 @@ export function Store() {
       )}
 
       <div className="gap-xl" />
+      <span className="x-badge"><i />Publish</span>
+      <div style={{ height: 12 }} />
       <h2 className="section">Publish a product</h2>
       <div style={{ height: 16 }} />
       <form className="card form" onSubmit={publish}>
