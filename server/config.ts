@@ -1,4 +1,6 @@
 export const PAYPAL_API_BASE_URL = "https://api-m.sandbox.paypal.com";
+export const PAYPAL_MCP_URL = "https://mcp.sandbox.paypal.com/http";
+export const PAYPAL_MCP_SSE_URL = "https://mcp.sandbox.paypal.com/sse";
 export const CHANNEL3_API_BASE_URL = "https://api.trychannel3.com";
 export const DEPLOYED_APP_URL_TO_CONFIGURE = "https://YOUR-DEPLOYED-APP-URL";
 export const ASTRO_GATEWAY_URL_TO_CONFIGURE = "https://YOUR-ASTROPODS-GATEWAY-HOST";

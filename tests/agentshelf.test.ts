@@ -204,6 +204,7 @@ describe("AgentShelf with local PostgreSQL", () => {
       "database",
       "kernel",
       "paypal",
+      "paypalMcp",
       "render",
     ]);
     expect(Object.values(status).every((value) => typeof value === "boolean")).toBe(true);

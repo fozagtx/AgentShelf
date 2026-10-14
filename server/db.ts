@@ -52,6 +52,9 @@ export async function ensureSchema(db: Db) {
   await db.query(
     `create index if not exists events_run_id_idx on ${EVENTS_TABLE} ((doc->>'runId'))`,
   );
+  await db.query(`alter table ${RUNS_TABLE} add column if not exists paypal_verified text`);
+  await db.query(`alter table ${RUNS_TABLE} add column if not exists paypal_status text`);
+  await db.query(`alter table ${RUNS_TABLE} add column if not exists paypal_checked_at timestamptz`);
 }
 
 export async function getDoc<T>(

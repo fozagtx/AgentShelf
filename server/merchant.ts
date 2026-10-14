@@ -62,7 +62,7 @@ export function createMerchantRoutes(db: Db, key: PlatformKey) {
         const order = await paypal.createOrder(built.totals, {
           returnUrl: c.req.header("x-agentshelf-return-url"),
           cancelUrl: c.req.header("x-agentshelf-cancel-url"),
-        });
+        }, `agentshelf-create-${built.id}`);
         built.payment_method.token = String(order.id);
         const approval = getApprovalUrl(order);
         if (approval) built.payment_method.approval_url = approval;
@@ -131,14 +131,16 @@ export function createMerchantRoutes(db: Db, key: PlatformKey) {
       return paymentError("The cart has no PayPal order token to capture.");
     }
     try {
-      const capture = await paypal.captureOrder(token);
+      const capture = await paypal.captureOrder(token, `agentshelf-capture-${token}`);
       const completed = { ...previous.cart, status: "COMPLETED" };
       await saveCart(db, completed);
+      const capturedAmount = capture.purchase_units?.[0]?.payments?.captures?.[0]?.amount;
       return c.json({
         ...completed,
         payment_confirmation: {
           merchant_order_number: String(capture.id ?? token),
           ...(capture.status ? { status: capture.status } : {}),
+          ...(capturedAmount ? { amount: capturedAmount } : {}),
         },
       });
     } catch (error) {
@@ -342,20 +344,21 @@ async function readBody(c: { req: { json: () => Promise<unknown> } }) {
 
 function paypalFailure(c: { json: (body: unknown, status: number) => Response }, error: unknown) {
   if (error instanceof PayPalApiError) {
-    const description = String(error.payload.details?.[0]?.description ?? error.payload.message ?? error.message);
+    const description = error.plainReason;
     if (error.status === 422) {
       return c.json({
         name: "UNPROCESSABLE_ENTITY",
         message: description,
+        issue: error.issue,
         business_context: {
           code: "PAYMENT_ERROR",
           type: "BUSINESS_RULE",
           message: description,
-          context: { specific_issue: "PAYMENT_DECLINED", payment_method: "paypal" },
+          context: { specific_issue: error.issue, payment_method: "paypal" },
         },
       }, 422);
     }
-    return c.json({ name: String(error.payload.name ?? "PAYPAL_API_ERROR"), message: description }, error.status >= 400 && error.status < 500 ? error.status : 502);
+    return c.json({ name: String(error.payload.name ?? "PAYPAL_API_ERROR"), message: description, issue: error.issue }, error.status >= 400 && error.status < 500 ? error.status : 502);
   }
   return c.json(errorBody("PAYPAL_API_ERROR", error instanceof Error ? error.message : "PayPal request failed."), 502);
 }

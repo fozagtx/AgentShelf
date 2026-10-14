@@ -1,5 +1,6 @@
 export interface Status {
   paypal: boolean;
+  paypalMcp: boolean;
   channel3: boolean;
   kernel: boolean;
   render: boolean;
@@ -66,6 +67,17 @@ export interface Analytics {
 
 export type RunRow = Record<string, string | number | boolean | null>;
 
+export interface PayPalVerification {
+  checked: number;
+  verified: number;
+  mismatches: {
+    runId: string;
+    model: string;
+    orderId: string;
+    paypalStatus: string;
+  }[];
+}
+
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, { headers: { "content-type": "application/json" }, ...init });
   const body = await res.json().catch(() => ({}));
@@ -92,4 +104,7 @@ export const api = {
     call<{ id: string }>("/api/experiments", { method: "POST", body: JSON.stringify(b) }),
   analytics: (id: string) => call<Analytics>(`/api/experiments/${id}/analytics`),
   runs: (id: string) => call<RunRow[]>(`/api/experiments/${id}/runs`),
+  paypalVerify: (id: string) =>
+    call<PayPalVerification>(`/api/experiments/${id}/paypal/verify`, { method: "POST" }),
+  paypal: (id: string) => call<PayPalVerification>(`/api/experiments/${id}/paypal`),
 };

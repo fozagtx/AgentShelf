@@ -13,6 +13,7 @@ import {
   countDocs,
   createDb,
   ensureSchema,
+  CARTS_TABLE,
   EVENTS_TABLE,
   EXPERIMENTS_TABLE,
   findDocs,
@@ -32,6 +33,11 @@ import { searchCompetitors, missingChannel3Credentials } from "./channel3.js";
 import { startExperimentWorkflow } from "./workflows.js";
 import { gateway, hasGateway } from "./gateway.js";
 import { createImageRoutes } from "./images.js";
+import { missingPayPalCredentials } from "./paypal.js";
+import {
+  callPayPalMcp,
+  isAllowedPayPalMcpTool,
+} from "./paypalMcp.js";
 
 export interface AppOptions {
   db?: Db;
@@ -50,6 +56,7 @@ export async function createApp(options: AppOptions = {}) {
     const configured = configuredIntegrations();
     return c.json({
       paypal: configured.paypal,
+      paypalMcp: configured.paypal,
       channel3: configured.channel3,
       kernel: configured.kernel,
       render: configured.render,
@@ -91,6 +98,34 @@ export async function createApp(options: AppOptions = {}) {
     } catch (error) {
       return c.json({
         error: error instanceof Error ? error.message : "Astropods chat request failed.",
+      }, 502);
+    }
+  });
+
+  app.post("/api/paypal-mcp/call", async (c) => {
+    const input = await readJson(c);
+    if (
+      !input ||
+      typeof input.name !== "string" ||
+      (input.args !== undefined &&
+        (!input.args || typeof input.args !== "object" || Array.isArray(input.args)))
+    ) {
+      return c.json({ error: "A tool name and object arguments are required." }, 400);
+    }
+    if (!isAllowedPayPalMcpTool(input.name)) {
+      return c.json({ error: `PayPal MCP tool is not allowed: ${input.name}` }, 400);
+    }
+    if (missingPayPalCredentials().length) {
+      return c.json({ error: "PayPal sandbox credentials missing" }, 503);
+    }
+    try {
+      return c.json(await callPayPalMcp(
+        input.name,
+        (input.args ?? {}) as Record<string, unknown>,
+      ));
+    } catch (error) {
+      return c.json({
+        error: error instanceof Error ? error.message : "PayPal MCP request failed.",
       }, 502);
     }
   });
@@ -311,7 +346,115 @@ export async function createApp(options: AppOptions = {}) {
       orderBy: "created_at",
       limit: 1000,
     });
-    return c.json(runs);
+    return c.json(runs.map((run) => ({
+      ...run,
+      paypal_verified: run.paypal_verified ?? null,
+    })));
+  });
+
+  app.get("/api/experiments/:id/paypal", async (c) => {
+    const experimentId = c.req.param("id");
+    const experiment = await getDoc<Record<string, any>>(
+      db,
+      EXPERIMENTS_TABLE,
+      experimentId,
+    );
+    if (!experiment) return c.json({ error: "Experiment not found." }, 404);
+    const runs = await findDocs<Record<string, any>>(db, RUNS_TABLE, {
+      where: { experiment_id: experimentId },
+      orderBy: "created_at",
+      limit: 1000,
+    });
+    return c.json(storedPayPalVerification(runs));
+  });
+
+  app.post("/api/experiments/:id/paypal/verify", async (c) => {
+    const experimentId = c.req.param("id");
+    const experiment = await getDoc<Record<string, any>>(
+      db,
+      EXPERIMENTS_TABLE,
+      experimentId,
+    );
+    if (!experiment) return c.json({ error: "Experiment not found." }, 404);
+    if (missingPayPalCredentials().length) {
+      return c.json({ error: "PayPal sandbox credentials missing" }, 503);
+    }
+    const runs = await findDocs<Record<string, any>>(db, RUNS_TABLE, {
+      where: { experiment_id: experimentId },
+      orderBy: "created_at",
+      limit: 1000,
+    });
+    const capturedRuns = runs.filter((run) => {
+      const captureStatus = String(run.capture_status ?? "").toUpperCase();
+      return Boolean(run.paypal_order_id) &&
+        (run.furthest_stage === "captured" ||
+          captureStatus === "COMPLETED" ||
+          captureStatus === "CAPTURED");
+    });
+    let verified = 0;
+    const mismatches: { runId: string; model: string; orderId: string; paypalStatus: string }[] = [];
+    for (const run of capturedRuns) {
+      const runId = String(run.id ?? "");
+      const orderId = String(run.paypal_order_id);
+      let response: unknown;
+      try {
+        response = await callPayPalMcp("get_order", { id: orderId });
+      } catch (error) {
+        if (!isNotFoundError(error)) {
+          return c.json({
+            error: error instanceof Error ? error.message : "PayPal order verification failed.",
+          }, 502);
+        }
+        response = { isError: true, content: [{ type: "text", text: String(error) }] };
+      }
+      const decoded = decodePayPalMcpResult(response);
+      const paypalStatus = isNotFoundResult(response, decoded)
+        ? "NOT_FOUND"
+        : String(decoded.order.status ?? decoded.order.status_code ?? "UNKNOWN");
+      if (Boolean((response as Record<string, any> | null)?.isError) &&
+        paypalStatus !== "NOT_FOUND") {
+        return c.json({
+          error: decoded.text || "PayPal order verification failed.",
+        }, 502);
+      }
+      let verification: "verified" | "mismatch" | "not_found";
+      if (paypalStatus === "NOT_FOUND") {
+        verification = "not_found";
+      } else {
+        const expectedAmount = run.paypal_captured_amount ??
+          await getCapturedCartAmount(db, run.cart_id);
+        verification = paypalStatus === "COMPLETED" &&
+          amountsMatch(capturedAmount(decoded.order), expectedAmount)
+          ? "verified"
+          : "mismatch";
+      }
+      const checkedAt = new Date().toISOString();
+      await db.query(
+        `update ${RUNS_TABLE} set doc = doc || $2::jsonb, paypal_verified = $3, paypal_status = $4, paypal_checked_at = $5 where id = $1`,
+        [
+          runId,
+          JSON.stringify({
+            paypal_verified: verification,
+            paypal_status: paypalStatus,
+            paypal_checked_at: checkedAt,
+          }),
+          verification,
+          paypalStatus,
+          checkedAt,
+        ],
+      );
+      if (verification === "verified") {
+        verified += 1;
+      } else {
+        mismatches.push({
+          runId,
+          model: String(run.model ?? ""),
+          orderId,
+          paypalStatus,
+        });
+      }
+    }
+    return c.json({ checked: capturedRuns.length, verified, mismatches });
   });
 
   app.get("/pages.css", async (c) => {
@@ -397,6 +540,117 @@ async function readJson(c: { req: { json: () => Promise<unknown> } }) {
   } catch {
     return null;
   }
+}
+
+function storedPayPalVerification(runs: Record<string, any>[]) {
+  const checkedRuns = runs.filter((run) =>
+    ["verified", "mismatch", "not_found"].includes(String(run.paypal_verified ?? "")),
+  );
+  return {
+    checked: checkedRuns.length,
+    verified: checkedRuns.filter((run) => run.paypal_verified === "verified").length,
+    mismatches: checkedRuns
+      .filter((run) => run.paypal_verified !== "verified")
+      .map((run) => ({
+        runId: String(run.id ?? ""),
+        model: String(run.model ?? ""),
+        orderId: String(run.paypal_order_id ?? ""),
+        paypalStatus: String(
+          run.paypal_status ??
+            (run.paypal_verified === "not_found" ? "NOT_FOUND" : "UNKNOWN"),
+        ),
+      })),
+  };
+}
+
+async function getCapturedCartAmount(db: Db, cartId: unknown) {
+  if (typeof cartId !== "string" || !cartId) return null;
+  const saved = await getDoc<Record<string, any>>(db, CARTS_TABLE, cartId);
+  return saved?.cart?.totals?.total ?? saved?.totals?.total ?? null;
+}
+
+function capturedAmount(order: Record<string, any>) {
+  const captures = Array.isArray(order.purchase_units)
+    ? order.purchase_units.flatMap((unit: Record<string, any>) =>
+        Array.isArray(unit.payments?.captures) ? unit.payments.captures : [],
+      )
+    : [];
+  if (!captures.length) return null;
+  const currency = captures[0]?.amount?.currency_code;
+  if (!currency || captures.some((capture: Record<string, any>) =>
+    capture.amount?.currency_code !== currency,
+  )) {
+    return null;
+  }
+  const cents = captures.reduce((sum: number, capture: Record<string, any>) =>
+    sum + moneyToCents(capture.amount?.value),
+  0);
+  return { currency_code: currency, value: (cents / 100).toFixed(2) };
+}
+
+function amountsMatch(
+  captured: Record<string, any> | null,
+  expected: Record<string, any> | null,
+) {
+  return Boolean(
+    captured &&
+    expected &&
+    captured.currency_code === expected.currency_code &&
+    moneyToCents(captured.value) === moneyToCents(expected.value),
+  );
+}
+
+function moneyToCents(value: unknown) {
+  const amount = Number(value);
+  return Number.isFinite(amount) ? Math.round(amount * 100) : Number.NaN;
+}
+
+function decodePayPalMcpResult(value: unknown): {
+  order: Record<string, any>;
+  text: string;
+} {
+  if (!value || typeof value !== "object") return { order: {}, text: String(value ?? "") };
+  const result = value as Record<string, any>;
+  if (result.structuredContent && typeof result.structuredContent === "object") {
+    const structured = result.structuredContent as Record<string, any>;
+    return {
+      order: (structured.order && typeof structured.order === "object"
+        ? structured.order
+        : structured) as Record<string, any>,
+      text: JSON.stringify(structured),
+    };
+  }
+  const text = Array.isArray(result.content)
+    ? result.content
+        .filter((item: Record<string, any>) => item.type === "text")
+        .map((item: Record<string, any>) => String(item.text ?? ""))
+        .join("\n")
+    : "";
+  try {
+    const parsed = JSON.parse(text) as Record<string, any>;
+    const order = parsed.order && typeof parsed.order === "object"
+      ? parsed.order
+      : parsed;
+    return { order, text };
+  } catch {
+    return { order: {}, text };
+  }
+}
+
+function isNotFoundResult(
+  value: unknown,
+  decoded: { order: Record<string, any>; text: string },
+) {
+  const result = value as Record<string, any> | null;
+  if (result?.status === 404) return true;
+  if (!result?.isError) return false;
+  const text = `${decoded.text} ${JSON.stringify(result ?? {})}`;
+  return /\b404\b|RESOURCE_NOT_FOUND|ORDER_NOT_FOUND|does not exist|not found/i.test(text);
+}
+
+function isNotFoundError(error: unknown) {
+  const text = error instanceof Error ? `${error.name} ${error.message}` : String(error);
+  return /\b404\b|RESOURCE_NOT_FOUND|ORDER_NOT_FOUND|does not exist|not found/i.test(text);
 }
 
 function mimeType(extension: string) {

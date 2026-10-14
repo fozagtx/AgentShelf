@@ -6,6 +6,7 @@ import {
 } from "../server/paypal.js";
 import { MODEL_FLEET, PAYPAL_API_BASE_URL } from "../server/config.js";
 import { gateway } from "../server/gateway.js";
+import { callPayPalMcp, listPayPalMcpTools } from "../server/paypalMcp.js";
 
 const paypalEnabled = Boolean(
   process.env.PAYPAL_CLIENT_ID && process.env.PAYPAL_CLIENT_SECRET,
@@ -43,6 +44,23 @@ describe("live Astropods AI gateway", () => {
 });
 
 describe("live PayPal sandbox", () => {
+  it.skipIf(!paypalEnabled)("lists read-only MCP tools and reads a real sandbox order", async () => {
+    const tools = await listPayPalMcpTools();
+    expect(tools.map((tool) => tool.name)).toContain("get_order");
+    expect(tools.map((tool) => tool.name)).toContain("list_transactions");
+
+    const paypal = new PayPalClient(
+      process.env.PAYPAL_CLIENT_ID!,
+      process.env.PAYPAL_CLIENT_SECRET!,
+    );
+    const order = await paypal.createOrder({
+      total: { currency_code: "USD", value: "1.00" },
+    });
+    const result = await callPayPalMcp("get_order", { id: String(order.id) });
+    expect(result.isError).not.toBe(true);
+    expect(JSON.stringify(result)).toContain(String(order.id));
+  });
+
   it.skipIf(!paypalEnabled)("creates, patches, reads, and attempts to capture a real order", async () => {
     const paypal = new PayPalClient(
       process.env.PAYPAL_CLIENT_ID!,

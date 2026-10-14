@@ -249,6 +249,9 @@ export function createPageRoutes(db: Db) {
       await patchDoc(db, RUNS_TABLE, runId, {
           status: "complete",
           capture_status: captureStatus,
+          ...(confirmation.payment_confirmation?.amount
+            ? { paypal_captured_amount: confirmation.payment_confirmation.amount }
+            : {}),
           chosen_is_merchant: true,
           chosen_title: run.chosen_title,
           furthest_stage: "captured",
@@ -290,7 +293,10 @@ async function cartRequest(
 async function apiError(response: Response) {
   try {
     const body = await response.json() as Record<string, unknown>;
-    return String(body.message ?? body.error ?? `Cart API returned ${response.status}.`);
+    const message = String(body.message ?? body.error ?? `Cart API returned ${response.status}.`);
+    return typeof body.issue === "string" && body.issue
+      ? `${message} [${body.issue}]`
+      : message;
   } catch {
     return `Cart API returned ${response.status}.`;
   }

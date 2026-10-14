@@ -6,7 +6,10 @@ import { directLlmRunner, createAiHarness, studioTheme, type AgReportState } fro
 import { api, type Analytics, type Experiment, type RunRow } from "./api";
 import { LiveShoppers } from "./LiveShoppers";
 import { AsciiImage } from "./Ascii";
-import { Item, hoverCard } from "./motion";
+import { FlowCanvas } from "./FlowCanvas";
+import { useCrumb } from "./Shell";
+import { createPayPalTools } from "./studio/paypalTools";
+import type { PayPalVerification } from "./api";
 import { createGatewayAdapter } from "./studio/adapter";
 import { buildStudioData } from "./studio/data";
 import { createDefaultReportState } from "./studio/report";
@@ -100,7 +103,7 @@ export function ExperimentView({ id }: { id: string }) {
         name: "AgentShelf analyst",
         description: "Explains why AI shoppers picked or skipped the merchant's product.",
         adapter,
-        instructions: () => "Explain why AI shoppers picked or skipped the merchant's product using only viewSchema, executeQuery, list_checkout_failures, and describe_shelf. Cite numbers from tool results. Never invent findings.",
+        instructions: () => "Explain why AI shoppers picked or skipped the merchant's product using only viewSchema, executeQuery, list_checkout_failures, describe_shelf, paypal_get_order, and paypal_list_transactions. Use the PayPal tools to confirm orders against PayPal's own records. Cite numbers from tool results. Never invent findings.",
         tools: (context: any) => [
           context.tools.studio.viewSchema(),
           context.tools.studio.executeQuery(),
@@ -145,6 +148,7 @@ export function ExperimentView({ id }: { id: string }) {
               return ctx.success(JSON.stringify(offers), { offers });
             },
           }),
+          ...createPayPalTools(studioApi),
         ],
       });
       return {
@@ -210,34 +214,16 @@ export function ExperimentView({ id }: { id: string }) {
     }
   };
 
+  useCrumb(exp ? { title: exp.query, status: exp.status } : null);
+
   if (error) return <div className="notice">{error}</div>;
   if (!exp || !stats) return <div className="empty">Loading</div>;
 
-  const total = stats.shareByModel.reduce((s, r) => s + r.runs, 0);
-  const picks = stats.shareByModel.reduce((s, r) => s + r.merchantPicks, 0);
-  const first = stats.positionBias.find((p) => p.position === 1);
-  const captured = stats.funnel.filter((f) => f.stage === "captured").reduce((s, f) => s + f.count, 0);
-
   return (
     <div className="enter">
-      <div className="eyebrow">{exp.status}{exp.run_counts ? ` · ${exp.run_counts.done}/${exp.run_counts.total} runs` : ""}</div>
-      <h1 className="display" style={{ maxWidth: "20ch" }}>{exp.query}</h1>
-      <div style={{ height: 20 }} />
-      <Item className="card takeaway" initial="hidden" animate="show">
-        <div className="eyebrow">What this means for you</div>
-        <p className="takeaway-text">{stats.takeaway.headline ?? "Your takeaway appears as soon as the first agents finish."}</p>
-      </Item>
-      <div className="gap-xl" />
-
-      <div className="grid4">
-        <div className="card kpi"><div className="kpi-label">Runs</div><div className="kpi-value">{total}</div></div>
-        <div className="card kpi"><div className="kpi-label">Picked your product</div><div className="kpi-value red">{total ? pct(picks / total) : "0%"}</div></div>
-        <div className="card kpi"><div className="kpi-label">Took the first offer</div><div className="kpi-value">{first ? pct(first.share) : "0%"}</div></div>
-        <div className="card kpi"><div className="kpi-label">Sandbox orders captured</div><div className="kpi-value">{captured}</div></div>
-      </div>
-
-      <div className="gap-xl" />
-      <h2 className="section">Shoppers right now</h2>
+      <FlowCanvas exp={exp} stats={stats} runs={runs} checkoutExtra={<PayPalVerify id={id} />} />
+      <div className="exp-rest">
+      <h2 className="section" id="live">Shoppers right now</h2>
       <div style={{ height: 16 }} />
       <LiveShoppers id={id} />
 
@@ -263,7 +249,7 @@ export function ExperimentView({ id }: { id: string }) {
           {reportMode === "edit" ? "Done" : "Edit report"}
         </button>
       </div>
-      <div className="card studio">
+      <div className="card studio" id="report">
         {data && (
           <AgStudioProvider licenseKey={LICENSE}>
             <AgStudio ref={studioRef} data={data} initialState={initialState} widgets={widgets} ai={ai} mode={reportMode} theme={reportTheme} style={{ height: "100%", width: "100%" }} />
@@ -319,6 +305,34 @@ export function ExperimentView({ id }: { id: string }) {
             </div>
           </a>
         ))}
+      </div>
+      </div>
+    </div>
+  );
+}
+
+function PayPalVerify({ id }: { id: string }) {
+  const [result, setResult] = useState<PayPalVerification | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => { api.paypal(id).then(setResult).catch(() => {}); }, [id]);
+  const verify = async () => {
+    setBusy(true);
+    setError("");
+    try { setResult(await api.paypalVerify(id)); }
+    catch (e) { setError(e instanceof Error ? e.message : "PayPal check failed."); }
+    finally { setBusy(false); }
+  };
+  return (
+    <div className="pfield">
+      <div className="pfield-label">Verified in PayPal</div>
+      <div className="pfield-box">
+        {result && result.checked > 0
+          ? <div>{result.verified} of {result.checked} captured orders match PayPal's own record.</div>
+          : <div>Check each captured order against PayPal through the PayPal MCP server.</div>}
+        {result?.mismatches.map((m) => <div key={m.runId} className="verify-bad">{m.model} · order {m.orderId} · {m.paypalStatus}</div>)}
+        {error && <div role="alert" className="verify-bad">{error}</div>}
+        <button type="button" className="verify-btn" disabled={busy} onClick={() => void verify()}>{busy ? "Checking PayPal" : "Verify in PayPal"}</button>
       </div>
     </div>
   );
