@@ -70,7 +70,13 @@ export function Shell({ path, children }: { path: string; children: ReactNode })
             </div>
             <div className="bar-tools">
               <span className="bar-chip" title={paypalOn ? "PayPal sandbox credentials configured" : "PayPal sandbox credentials missing"}><img src="/logos/paypal.png" alt="" />PayPal sandbox<i className={`bar-dot ${paypalOn ? "on" : "off"}`} aria-hidden /></span>
-              <Link to="/app" className="bar-cta">Run a test</Link>
+              <Link to="/app" className="bar-cta" onClick={() => {
+                if (!isDash) return;
+                const el = document.getElementById("query");
+                el?.scrollIntoView({ block: "center" });
+                el?.focus();
+                return false;
+              }}>Run a test</Link>
             </div>
           </header>
           <main className={`page${isExp || isDash ? " wide" : ""}${isDash ? " dash-page" : ""}`} key={path}>{children}</main>

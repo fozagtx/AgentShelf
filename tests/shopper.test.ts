@@ -47,8 +47,7 @@ describe("shopper tool helpers", () => {
     try {
       expect(missingShopperCredentials()).toEqual([
         "KERNEL_API_KEY",
-        "OPENAI_API_KEY",
-        "NEBIUS_API_KEY",
+        "OPENAI_API_KEY or NEBIUS_API_KEY",
       ]);
     } finally {
       if (kernelKey) process.env.KERNEL_API_KEY = kernelKey;

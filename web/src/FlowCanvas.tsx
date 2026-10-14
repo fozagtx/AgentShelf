@@ -263,8 +263,17 @@ export function FlowCanvas({ exp, stats, runs, checkoutExtra, live, initial }: {
               {runningLive.length > 0 && (
                 <ul className="node-rows">
                   <li>
-                    <span className="node-row-label"><span className="live-dot" aria-hidden />Live browsers</span>
+                    <span className="node-row-label">Running shoppers</span>
                     <span className="node-row-value">{runningLive.length}</span>
+                    <Mark state="running" />
+                  </li>
+                </ul>
+              )}
+              {liveBrowsers.length > 0 && (
+                <ul className="node-rows">
+                  <li>
+                    <span className="node-row-label"><span className="live-dot" aria-hidden />Live browsers</span>
+                    <span className="node-row-value">{liveBrowsers.length}</span>
                     <Mark state="running" />
                   </li>
                 </ul>
@@ -366,7 +375,9 @@ export function FlowCanvas({ exp, stats, runs, checkoutExtra, live, initial }: {
                       </div>
                     ) : (
                       <>
-                        <div className="meta">No browsers running right now. Live views appear here while shoppers run.</div>
+                        <div className="meta">{runningLive.length > 0
+                          ? `${runningLive.length} shopper${runningLive.length === 1 ? "" : "s"} running, but none has reported a live browser view yet.`
+                          : "No browsers running right now. Live views appear here while shoppers run."}</div>
                         {replays.length > 0 && (
                           <ul className="plist">
                             {replays.slice(0, 5).map((r) => (

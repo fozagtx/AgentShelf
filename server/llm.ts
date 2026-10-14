@@ -45,7 +45,7 @@ export function configuredProviders(): Provider[] {
 }
 
 export function missingLlmCredentials(): string[] {
-  return configuredProviders().length ? [] : ["OPENAI_API_KEY", "NEBIUS_API_KEY"];
+  return configuredProviders().length ? [] : ["OPENAI_API_KEY or NEBIUS_API_KEY"];
 }
 
 export function hasLlm() {

@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { motion } from "motion/react";
-import { api, type Experiment, type LlmProvider, type Models, type PayPalMcpTools, type Product } from "./api";
+import { api, type Experiment, type LlmProvider, type Models, type PayPalMcpTools, type Product, type Status } from "./api";
 import { Link, navigate } from "./router";
 import { ProductPicker } from "./ProductPicker";
 import { EASE } from "./motion";
@@ -51,6 +51,8 @@ export function Experiments() {
   const [tools, setTools] = useState<PayPalMcpTools | null>(null);
   const [modelsData, setModelsData] = useState<Models | null>(null);
   const [modelsError, setModelsError] = useState("");
+  const [status, setStatus] = useState<Status | null>(null);
+  const [statusError, setStatusError] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
   const [productId, setProductId] = useState("");
   const [query, setQuery] = useState("");
@@ -62,6 +64,7 @@ export function Experiments() {
     api.experiments().then(setExperiments).catch((e) => { setExperiments([]); setError(e.message); });
     api.products().then((p) => { setProducts(p); if (p[0]) setProductId(p[0].id); }).catch(() => {});
     api.paypalMcpTools().then(setTools).catch(() => {});
+    api.status().then(setStatus).catch((e) => setStatusError(e instanceof Error ? e.message : String(e)));
     api.models()
       .then((data) => setModelsData(validModels(data) ? data : { models: [], errors: [], providers: { openai: false, nebius: false } }))
       .catch((e) => {
@@ -89,8 +92,24 @@ export function Experiments() {
     } catch (err) {
       setError((err as Error).message);
       setBusy(false);
+      requestAnimationFrame(() => document.getElementById("run-error")?.scrollIntoView({ block: "nearest" }));
     }
   }
+
+  const requirements = [
+    { label: "Channel3 competitor offers", env: "CHANNEL3_API_KEY", ok: status ? status.channel3 : true },
+    { label: "Kernel browsers", env: "KERNEL_API_KEY", ok: status ? status.kernel : true },
+    { label: "Render workflows", env: "RENDER_API_KEY", ok: status ? status.render : true },
+    { label: "Shopper models", env: "OPENAI_API_KEY or NEBIUS_API_KEY", ok: status ? (status.openai || status.nebius) : true },
+  ];
+  const missingReqs = requirements.filter((r) => !r.ok);
+  const runReason = statusError || missingReqs.length
+    ? statusError ? "" : `Add ${missingReqs[0].env} to run`
+    : !productId ? "Pick a product"
+    : !query.trim() ? "Enter a shopper intent"
+    : !selectedModels.length ? "Pick at least one model"
+    : "";
+  const runDisabled = busy || missingReqs.length > 0 || !productId || !query.trim() || selectedModels.length === 0;
 
   const product = products.find((p) => p.id === productId);
   const runsPerModel = reps * (product?.fixed_variant ? 2 : 1);
@@ -225,9 +244,28 @@ export function Experiments() {
           <div className="pfield">
             <div className="pfield-label">Checkout</div>
             <div className="pfield-box dash-pay"><img src="/logos/paypal.png" alt="" />PayPal sandbox <span className="chip">Orders v2</span></div>
+            {status && !status.paypal && (
+              <div className="meta">PayPal checkout won't capture orders until <code>PAYPAL_CLIENT_ID</code> and <code>PAYPAL_CLIENT_SECRET</code> are set.</div>
+            )}
           </div>
-          {error && <div className="notice">{error}</div>}
-          <button className="btn red dash-go" disabled={busy || !productId || selectedModels.length === 0}>{busy ? "Starting fleet" : "Run the fleet"}</button>
+          {statusError && <div className="meta">Couldn't check setup: {statusError}</div>}
+          {missingReqs.length > 0 && (
+            <div className="pfield">
+              <div className="pfield-label">Before you can run</div>
+              <ul className="node-rows req-rows">
+                {requirements.map((r) => (
+                  <li key={r.env}>
+                    <span className="node-row-label"><span>{r.label}</span><code>{r.env}</code></span>
+                    {r.ok ? <Check /> : <Waiting />}
+                  </li>
+                ))}
+              </ul>
+              <div className="meta">Set these once on the agentshelf web service in Render, then redeploy.</div>
+            </div>
+          )}
+          <button className="btn red dash-go" disabled={runDisabled}>{busy ? "Starting fleet" : "Run the fleet"}</button>
+          {runReason && <div className="meta">{runReason}</div>}
+          {error && <div className="notice" id="run-error">{error}</div>}
         </form>
 
         <div className="dash-tools">
