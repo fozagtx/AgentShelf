@@ -19,6 +19,14 @@ Install the PayPal AI Toolkit before changing PayPal code:
 Set `PAYPAL_SANDBOX_ACCESS_TOKEN` for the PayPal sandbox MCP server (`.mcp.json`),
 then run `/paypal:doctor` to verify the setup.
 
+## Deploy (Render)
+
+`render.yaml` deploys the `agentshelf` web service and `agentshelf-workflows`.
+Set secrets once on the web service (`sync: false`); the workflow service
+inherits them via `fromService`. The app URL comes from `RENDER_EXTERNAL_URL`/
+`APP_HOST` automatically — no hard-coded URL. Also set `ASTRO_GATEWAY_URL`
+to the Astropods gateway base URL (the code appends `/v1`).
+
 ## Testing and building
 
 - `npm test` — vitest suite (needs local Postgres at `postgres://postgres:postgres@127.0.0.1:5432/agentshelf`)

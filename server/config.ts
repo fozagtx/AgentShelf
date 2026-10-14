@@ -2,8 +2,6 @@ export const PAYPAL_API_BASE_URL = "https://api-m.sandbox.paypal.com";
 export const PAYPAL_MCP_URL = "https://mcp.sandbox.paypal.com/http";
 export const PAYPAL_MCP_SSE_URL = "https://mcp.sandbox.paypal.com/sse";
 export const CHANNEL3_API_BASE_URL = "https://api.trychannel3.com";
-export const DEPLOYED_APP_URL_TO_CONFIGURE = "https://YOUR-DEPLOYED-APP-URL";
-export const ASTRO_GATEWAY_URL_TO_CONFIGURE = "https://YOUR-ASTROPODS-GATEWAY-HOST";
 export const FIX_MODEL = "gpt-5-6-terra";
 export const PRODUCT_FIX_MODEL = FIX_MODEL;
 export const PLATFORM_ISSUER = "https://agentshelf.local";
@@ -21,11 +19,14 @@ export const MODEL_FLEET = [
 ] as const;
 
 export function getAppUrl() {
-  if (process.env.NODE_ENV !== "production" && process.env.APP_URL) {
-    return process.env.APP_URL.replace(/\/$/, "");
-  }
-  if (process.env.NODE_ENV !== "production") return "http://127.0.0.1:3000";
-  return DEPLOYED_APP_URL_TO_CONFIGURE.replace(/\/$/, "");
+  const host = process.env.APP_HOST;
+  const url =
+    process.env.APP_URL ||
+    process.env.RENDER_EXTERNAL_URL ||
+    (host ? `https://${host}` : "") ||
+    (process.env.NODE_ENV !== "production" ? "http://127.0.0.1:3000" : "");
+  if (!url) throw new Error("APP_URL is not set (expected RENDER_EXTERNAL_URL or APP_HOST on Render).");
+  return url.replace(/\/$/, "");
 }
 
 export function configuredIntegrations() {

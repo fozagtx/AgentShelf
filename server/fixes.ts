@@ -11,7 +11,8 @@ export interface ProductFix {
 }
 
 export function missingGatewayCredentials() {
-  return hasGateway() ? [] : ["ASTRO_GATEWAY_API_KEY"];
+  return (["ASTRO_GATEWAY_API_KEY", "ASTRO_GATEWAY_URL"] as const)
+    .filter((key) => !process.env[key]);
 }
 
 export async function generateProductFix(
