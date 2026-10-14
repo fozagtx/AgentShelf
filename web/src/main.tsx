@@ -27,6 +27,15 @@ function App() {
   const exp = path.match(/^\/app\/experiments\/([^/]+)/);
   if (!path.startsWith("/app")) return <Landing />;
 
+  const known = path === "/app" || path === "/app/" || path.startsWith("/app/store") || exp;
+  useEffect(() => {
+    if (path.startsWith("/app") && !known) {
+      history.replaceState(null, "", "/app");
+      dispatchEvent(new PopStateEvent("popstate"));
+    }
+  }, [path, known]);
+  if (!known) return null;
+
   return (
     <Shell path={path}>
       {exp ? <ExperimentView id={exp[1]} /> : path.startsWith("/app/store") ? <Store /> : <Experiments />}

@@ -116,7 +116,7 @@ describe("listModels", () => {
   it("names both keys when no provider is configured", () => {
     const restore = stubEnv({ OPENAI_API_KEY: undefined, NEBIUS_API_KEY: undefined });
     try {
-      expect(missingLlmCredentials()).toEqual(["OPENAI_API_KEY", "NEBIUS_API_KEY"]);
+      expect(missingLlmCredentials()).toEqual(["OPENAI_API_KEY or NEBIUS_API_KEY"]);
     } finally {
       restore();
     }
