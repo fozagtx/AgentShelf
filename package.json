@@ -7,7 +7,7 @@
     "build": "npm run build:server && tsc -p tsconfig.web.json --noEmit && vite build web --outDir dist",
     "build:server": "tsc -p tsconfig.build.json",
     "dev": "tsx watch server/index.ts",
-    "dev:web": "vite --root web --host 127.0.0.1",
+    "dev:web": "vite --host 127.0.0.1",
     "start": "node dist/server/index.js",
     "start:workflows": "node dist/server/workflow-index.js",
     "dev:workflows": "render workflows dev -- npm start",

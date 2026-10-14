@@ -4,7 +4,7 @@ import type { Analytics, Experiment, RunRow } from "./api";
 import { EASE } from "./motion";
 
 type State = "done" | "running" | "waiting" | "failed";
-type NodeId = "listing" | "shelf" | "fleet" | "checkout" | "results";
+export type NodeId = "listing" | "shelf" | "fleet" | "checkout" | "results";
 
 const STAGES: [string, string][] = [
   ["shelf_viewed", "Saw the shelf"],
@@ -126,7 +126,7 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-export function FlowCanvas({ exp, stats, runs, checkoutExtra }: { exp: Experiment; stats: Analytics; runs: RunRow[]; checkoutExtra?: ReactNode }) {
+export function FlowCanvas({ exp, stats, runs, checkoutExtra, initial }: { exp: Experiment; stats: Analytics; runs: RunRow[]; checkoutExtra?: ReactNode; initial?: NodeId }) {
   const d = useMemo(() => {
     const models = new Map<string, { total: number; finished: number; failed: number }>();
     const variants = new Map<string, { total: number; finished: number }>();
@@ -163,7 +163,7 @@ export function FlowCanvas({ exp, stats, runs, checkoutExtra }: { exp: Experimen
   const resultsState: State = complete ? "done" : d.finished > 0 ? "running" : "waiting";
 
   const states: Record<NodeId, State> = { listing: "done", shelf: shelfState, fleet: fleetState, checkout: checkoutState, results: resultsState };
-  const [selected, setSelected] = useState<NodeId | null>(null);
+  const [selected, setSelected] = useState<NodeId | null>(initial ?? null);
   const active: NodeId | null = selected;
 
   const wrapRef = useRef<HTMLDivElement>(null);
