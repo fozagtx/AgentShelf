@@ -251,10 +251,10 @@ export function Experiments() {
           {missingReqs.length > 0 && (
             <div className="pfield">
               <div className="pfield-label">Before you can run</div>
-              <ul className="node-rows">
+              <ul className="node-rows req-rows">
                 {requirements.map((r) => (
                   <li key={r.env}>
-                    <span className="node-row-label">{r.label} <code>{r.env}</code></span>
+                    <span className="node-row-label"><span>{r.label}</span><code>{r.env}</code></span>
                     {r.ok ? <Check /> : <Waiting />}
                   </li>
                 ))}
